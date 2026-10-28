@@ -9,6 +9,11 @@ import { validateEvent } from "./events/validate.ts";
 import { lintBundle } from "./lint/index.ts";
 import { exportOkf } from "./lint/okf.ts";
 import { ingestCommand } from "./state/ingest.ts";
+import { existsSync } from "node:fs";
+import { installCmd } from "./install/index.ts";
+import { doctorCmd } from "./doctor.ts";
+import { adoptLocalEntries } from "./install/adopt.ts";
+import { defaultManifestPath } from "./install/manifest.ts";
 
 export { emitEvent };
 
@@ -43,7 +48,7 @@ function validateCommand(file: string): number {
   return exit;
 }
 
-export function run(args: string[]): number {
+export async function run(args: string[]): Promise<number> {
   if (args[0] === "version" && args[1] === "--json") {
     console.log(JSON.stringify(VERSION));
     return 0;
@@ -155,10 +160,115 @@ export function run(args: string[]): number {
     }
     return ok ? 0 : 1;
   }
+  if (args[0] === "install") {
+    const modes = new Set<string>();
+    let home: string | undefined;
+    let manifestPath: string | undefined;
+    let only: string | undefined;
+    const rest = args.slice(1);
+    for (let i = 0; i < rest.length; i++) {
+      const arg = rest[i]!;
+      if (arg === "--dry-run" || arg === "--apply" || arg === "--revert" || arg === "--rebaseline") {
+        modes.add(arg);
+      } else if (arg === "--home" || arg === "--manifest" || arg === "--only") {
+        const value = rest[i + 1];
+        if (value === undefined || value === "") {
+          console.error("uso: ginga install ...");
+          return 2;
+        }
+        i++;
+        if (arg === "--home") home = value;
+        else if (arg === "--manifest") manifestPath = value;
+        else only = value;
+      } else {
+        console.error("uso: ginga install ...");
+        return 2;
+      }
+    }
+    if (modes.size !== 1) {
+      console.error("uso: ginga install ...");
+      return 2;
+    }
+    const resolvedHome = home ?? process.env.HOME;
+    if (resolvedHome === undefined || !existsSync(resolvedHome)) {
+      console.error("uso: ginga install ...");
+      return 2;
+    }
+    const mode = modes.has("--dry-run")
+      ? ("dry-run" as const)
+      : modes.has("--apply")
+        ? ("apply" as const)
+        : modes.has("--rebaseline")
+          ? ("rebaseline" as const)
+          : ("revert" as const);
+    return await installCmd({
+      mode,
+      home: resolvedHome,
+      manifestPath,
+      only,
+      env: process.env,
+      cwd: process.cwd(),
+    });
+  }
+
+  if (args[0] === "doctor") {
+    return doctorCmd(args.slice(1));
+  }
+
+  if (args[0] === "adopt") {
+    const modes = new Set<string>();
+    let home: string | undefined;
+    let manifestPath: string | undefined;
+    const rest = args.slice(1);
+    for (let i = 0; i < rest.length; i++) {
+      const arg = rest[i]!;
+      if (arg === "--dry-run" || arg === "--apply") {
+        modes.add(arg);
+      } else if (arg === "--home" || arg === "--manifest") {
+        const value = rest[i + 1];
+        if (value === undefined || value === "") {
+          console.error("uso: ginga adopt ...");
+          return 2;
+        }
+        i++;
+        if (arg === "--home") home = value;
+        else manifestPath = value;
+      } else {
+        console.error("uso: ginga adopt ...");
+        return 2;
+      }
+    }
+    if (modes.size !== 1) {
+      console.error("uso: ginga adopt ...");
+      return 2;
+    }
+    const resolvedHome = home ?? process.env.HOME;
+    if (resolvedHome === undefined || !existsSync(resolvedHome)) {
+      console.error("uso: ginga adopt ...");
+      return 2;
+    }
+    const env = process.env;
+    const resolvedManifest = manifestPath ?? defaultManifestPath(env);
+    const apply = modes.has("--apply");
+    await adoptLocalEntries({
+      homeDir: resolvedHome,
+      manifestPath: resolvedManifest,
+      apply,
+    });
+    return 0;
+  }
+
+  if (args.length === 0) {
+    console.error("usage: ginga install / pinga install (--dry-run | --apply | --revert | --rebaseline) [--only H] [--manifest PATH] [--home PATH]");
+    return 2;
+  }
+  console.error(`uso: ginga install ... (pinga install)`);
   console.error(`comando desconhecido: ${args[0] ?? "(vazio)"}`);
   return 2;
 }
 
+export const runCli = run;
+
 if (import.meta.main) {
-  process.exit(run(process.argv.slice(2)));
+  process.exit(await run(process.argv.slice(2)));
 }
