@@ -1,0 +1,14 @@
+# PLAN-0010 TASK-03: um tick é o mesmo comando que o `ginga serve` roda
+# internamente (src/tick.ts) — aqui é o modo "sem serve de pé". Unit de serviço
+# --user, disparada pelo ginga-tick.timer (mesmo nome). Instalar com:
+#   systemctl --user enable --now ginga-tick.timer
+# O claim atômico (lease em task_exec) garante que não despacha duas vezes
+# quando o serve também está tickando.
+
+[Unit]
+Description=ginga tick: varre a fila e despacha TASKs desbloqueadas
+Documentation=docs/hermes-cron.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env ginga tick

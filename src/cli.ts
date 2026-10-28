@@ -1,12 +1,14 @@
 const VERSION = { schema_version: 1, name: "ginga", version: "0.1.0" } as const;
 
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { emitEvent } from "./events/emit.ts";
 import { migrateFile } from "./events/migrate.ts";
 import { validateEvent } from "./events/validate.ts";
 import { lintBundle } from "./lint/index.ts";
 import { exportOkf } from "./lint/okf.ts";
+import { ingestCommand } from "./state/ingest.ts";
 
 export { emitEvent };
 
@@ -58,6 +60,9 @@ export function run(args: string[]): number {
     emitEvent(JSON.parse(args[2] ?? "{}"));
     return 0;
   }
+  if (args[0] === "events" && args[1] === "ingest") {
+    return ingestCommand();
+  }
   if (args[0] === "events" && args[1] === "migrate") {
     const input = args[2];
     const flag = args.findIndex((a) => a === "--out" || a.startsWith("--out="));
@@ -74,6 +79,29 @@ export function run(args: string[]): number {
       console.error(`falha ao migrar ${input}: ${(e as Error).message}`);
       return 1;
     }
+  }
+  if (args[0] === "tick") {
+    // A renovação do lease precisa do event loop, então tick roda como worker
+    // async próprio; esta fachada é síncrona e só repassa flags e exit code.
+    const worker = Bun.spawnSync([Bun.which("bun") ?? "bun", join(import.meta.dir, "tick.ts"), ...args.slice(1)], {
+      stdin: "ignore",
+      stdout: "inherit", // o default é pipe: sem isto o JSON/human-out morre em worker.stdout
+      stderr: "inherit",
+    });
+    if (worker.exitCode === null) console.error(`falha ao iniciar o worker do tick`);
+    return worker.exitCode ?? 1;
+  }
+  if (args[0] === "serve") {
+    // O serve roda para sempre e precisa do event loop, então serve roda como
+    // worker próprio; esta fachada é síncrona e só repassa flags e exit code
+    // (mesmo padrão do tick, acima).
+    const worker = Bun.spawnSync([Bun.which("bun") ?? "bun", join(import.meta.dir, "serve.ts"), ...args.slice(1)], {
+      stdin: "ignore",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    if (worker.exitCode === null) console.error(`falha ao iniciar o worker do serve`);
+    return worker.exitCode ?? 1;
   }
   if (args[0] === "lint") {
     const rest = args.slice(1);
