@@ -5,6 +5,6 @@ touch: ["src/notify/port.ts", "src/notify/hermes.ts", "src/notify/discord.ts", "
 tests_frozen: ["tests/notify_port.test.ts"]
 done_when: "bun test tests/notify_port.test.ts"
 ---
-# T16: Porta de notificação (PLAN-0010 TASK-04-notifier-port)
+# T22: Porta de notificação (PLAN-0010 TASK-04-notifier-port)
 
 Materializada de `.ginga/plans/PLAN-0010-tick-serve-notifier/TASK-04-notifier-port.md`.

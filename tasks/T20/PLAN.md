@@ -5,6 +5,6 @@ touch: ["src/tick.ts", "src/cli.ts", "tests/tick.test.ts", "tests/tick_parallel.
 tests_frozen: ["tests/tick.test.ts", "tests/tick_parallel.test.ts"]
 done_when: "bun test tests/tick.test.ts tests/tick_parallel.test.ts"
 ---
-# T14: ginga tick com claim/lease (PLAN-0010 TASK-02-tick-lease)
+# T20: ginga tick com claim/lease (PLAN-0010 TASK-02-tick-lease)
 
 Materializada de `.ginga/plans/PLAN-0010-tick-serve-notifier/TASK-02-tick-lease.md`.

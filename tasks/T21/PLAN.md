@@ -5,6 +5,6 @@ touch: ["src/serve.ts", "src/cli.ts", "contrib/systemd/ginga-tick.service", "con
 tests_frozen: ["tests/serve.test.ts"]
 done_when: "bun test tests/serve.test.ts && grep -q 'ginga tick' contrib/systemd/ginga-tick.service docs/hermes-cron.md"
 ---
-# T15: ginga serve + timers (PLAN-0010 TASK-03-serve-timers)
+# T21: ginga serve + timers (PLAN-0010 TASK-03-serve-timers)
 
 Materializada de `.ginga/plans/PLAN-0010-tick-serve-notifier/TASK-03-serve-timers.md`.
