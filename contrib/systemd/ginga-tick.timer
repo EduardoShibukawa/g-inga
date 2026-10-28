@@ -1,0 +1,17 @@
+# PLAN-0010 TASK-03: timer --user que dispara o ginga-tick.service
+# periodicamente (mesmo `ginga tick` que o cron do Hermes chama — ver
+# docs/hermes-cron.md). Instalar com:
+#   systemctl --user enable --now ginga-tick.timer
+# O cron do Hermes pode ficar como rede de segurança; ambos usam o mesmo
+# `ginga tick`, cujo lease atômico evita duplo despacho.
+
+[Unit]
+Description=roda ginga tick de tempos em tempos
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

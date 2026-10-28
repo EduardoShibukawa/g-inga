@@ -1,0 +1,18 @@
+# PLAN-0010 TASK-03: serviço --user que mantém o `ginga serve` de pé. O serve
+# roda o tick sozinho (intervalo de [serve].tick_seconds + evento em
+# $GINGA_EVENTS), então com ele ativo o ginga-tick.timer fica redundante —
+# e isto é o preferencial. Instalar com:
+#   systemctl --user enable --now ginga-serve.service
+# Escuta só em 127.0.0.1:[serve].port (padrão 4243; sem API até o PLAN-0011).
+
+[Unit]
+Description=ginga serve: processo de referência que ticka por timer e por evento
+Documentation=docs/hermes-cron.md
+
+[Service]
+ExecStart=/usr/bin/env ginga serve
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
