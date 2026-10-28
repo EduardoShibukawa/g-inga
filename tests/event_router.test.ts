@@ -92,6 +92,7 @@ describe("routePending (serve)", () => {
     writeFileSync(eventsPath, JSON.stringify(e1) + "\n");
     const fetched: { url: string; init: any }[] = [];
     const deps = {
+      env: { DISCORD_BOT_TOKEN: "tok" },
       spawn: async (_cmd: string[]) => ({ exitCode: 1, stderr: "hermes down" }),
       fetch: async (url: string, init: any) => {
         fetched.push({ url, init });
@@ -119,12 +120,13 @@ describe("routePending (serve)", () => {
     }
   });
 
-  test("sem $INGA_EVENTS a ingestão é pulada e o roteamento segue com o db existente", async () => {
+  test("sem $GINGA_EVENTS a ingestão é pulada e o roteamento segue com o db existente", async () => {
     const { router, dbmod } = await load();
     const serve: any = await import(join(ROOT, "src", "serve.ts"));
     const dir = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), "ginga-routepending2-")));
     dirs.push(dir);
     const dbPath = join(dir, "state.db");
+    mkdirSync(join(dir, ".ginga"), { recursive: true });
     writeFileSync(join(dir, ".ginga", "project.toml"), [
       "[notify.targets]",
       'discord = "discord:123"',

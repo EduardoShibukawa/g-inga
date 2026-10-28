@@ -12,6 +12,14 @@ export function stateDbPath(): string {
   return join(process.cwd(), ".ginga", "state", "state.db");
 }
 
+/** Caminho do db a partir de um root explícito ($GINGA_STATE_DB vence),
+ *  como o tick usa; serve/roteamento abrem pelo root, não pelo cwd. */
+export function resolveStateDbPath(root: string): string {
+  const env = process.env.GINGA_STATE_DB;
+  if (env && env !== "") return env;
+  return join(root, ".ginga", "state", "state.db");
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS task_exec (
   plan TEXT NOT NULL,

@@ -14,7 +14,8 @@ import { join } from "node:path";
 import { runTick } from "./tick.ts";
 import { routeEvents } from "./notify/router.ts";
 import { send as portSend } from "./notify/port.ts";
-import { openStateDb } from "./state/db.ts";
+import { openStateDb, resolveStateDbPath } from "./state/db.ts";
+import { ingestEvents } from "./state/ingest.ts";
 
 /** Padrão até o PLAN-0011 (sem auth, só loopback). */
 const DEFAULT_HOST = "127.0.0.1";
@@ -125,17 +126,32 @@ function readNotifyConfig(root: string): NotifyConfig {
   return parseNotifyConfig(raw);
 }
 
-const spawnHermes = (cmd: string[]) => Bun.spawn(cmd, { stdout: "ignore", stderr: "pipe" });
+const spawnHermes = (cmd: string[]) => Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
 
 /** Roteia os eventos novos do state.db (TASK-05); best-effort e sem segredos:
- *  sem `[notify.targets]` no project.toml, nada sai daqui. */
-export async function routePending(root: string): Promise<number> {
+ *  sem `[notify.targets]` no project.toml, nada sai daqui.
+ *  Antes de rotear ingere $GINGA_EVENTS (o router lê a tabela `events`); o
+ *  db é aberto pelo root ($GINGA_STATE_DB ou <root>/.ginga/state/state.db) e
+ *  o fallback discord usa `fetch`.
+ * deps: stubs do port para testes (spawn, fetch...). */
+export async function routePending(
+  root: string,
+  deps: { spawn?: any; fetch?: any; out?: any; env?: any; config?: any } = {},
+): Promise<number> {
   const notify: NotifyConfig = readNotifyConfig(root);
   if (Object.keys(notify.targets).length === 0) return 0;
-  const db = openStateDb();
+  const eventsPath = process.env.GINGA_EVENTS ?? "";
+  if (eventsPath !== "") {
+    try {
+      ingestEvents(eventsPath);
+    } catch (e) {
+      console.error(`serve: ingest de ${eventsPath} falhou: ${(e as Error).message}`);
+    }
+  }
+  const db = openStateDb(resolveStateDbPath(root));
   try {
     const r = await routeEvents(db, {
-      send: (m) => portSend(m, { spawn: spawnHermes }),
+      send: (m) => portSend(m, { spawn: deps.spawn ?? spawnHermes, fetch: deps.fetch ?? globalThis.fetch, ...(deps.out ? { out: deps.out } : {}), ...(deps.env !== undefined ? { env: deps.env } : {}), ...(deps.config !== undefined ? { config: deps.config } : {}) }),
       targets: notify.targets,
       mention: notify.mention,
       rules: notify.rules,

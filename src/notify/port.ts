@@ -1,6 +1,16 @@
 export type NotifyInput = { target: string; text: string; thread?: string };
 
-export async function send(input: NotifyInput, deps: any = {}): Promise<{ ok: boolean; via: string; attempts: any[] }> {
+export async function send(input: NotifyInput, deps: any = {}): Promise<{ ok: boolean; via: string; attempts: any[]; thread_id?: string }> {
+  // thread_id devolvido ao router (T22): no hermes, o id que ele imprime no
+  // stdout; no discord, a thread usada no POST; no stdout, nada. Sem isso o
+  // router nunca persiste a thread por PLAN.
+  const finish = (ok: boolean, via: string, thread_id?: string) =>
+    ({ ok, via, attempts, ...(thread_id !== undefined ? { thread_id } : {}) });
+  const hermesThread = (stdout: unknown): string | undefined => {
+    const s = typeof stdout === "string" ? stdout : stdout == null ? "" : stdout.toString();
+    const m = /(?:^|\s)thread_id[=:]\s*([A-Za-z0-9_-]+)/.exec(s);
+    return m && m[1] !== "" ? m[1] : undefined;
+  };
   const env = deps?.env ?? {};
   const config = deps?.config ?? {};
   const attempts: any[] = [];
@@ -16,7 +26,7 @@ export async function send(input: NotifyInput, deps: any = {}): Promise<{ ok: bo
     const res = await deps.spawn(["hermes", "send", "-t", hermesTarget, text]);
     if (res && res.exitCode === 0) {
       attempts.push({ adapter: "hermes", ok: true });
-      return { ok: true, via: "hermes", attempts };
+      return finish(true, "hermes", hermesThread(res?.stdout) ?? input.thread ?? undefined);
     }
     hermesReason = (res && (res.stderr || `exit ${res.exitCode}`)) || "hermes failed";
   } catch (e: any) {
@@ -40,15 +50,17 @@ export async function send(input: NotifyInput, deps: any = {}): Promise<{ ok: bo
   } else if (!channel) {
     attempts.push({ adapter: "discord", ok: false, reason: "missing discord channel" });
   } else {
+    // T22: `fetch` vem injetado; sem injeção, o fetch global do runtime.
+    const doFetch = typeof deps.fetch === "function" ? deps.fetch : globalThis.fetch;
     try {
-      const res = await deps.fetch(`https://discord.com/api/v10/channels/${channel}/messages`, {
+      const res = await doFetch(`https://discord.com/api/v10/channels/${channel}/messages`, {
         method: "POST",
         headers: { Authorization: `Bot ${token}` },
         body: JSON.stringify({ content: text }),
       });
       if (res && res.ok) {
         attempts.push({ adapter: "discord", ok: true });
-        return { ok: true, via: "discord", attempts };
+        return finish(true, "discord", input.thread ?? undefined);
       }
       const reason = `discord http ${res ? res.status : "error"}`;
       attempts.push({ adapter: "discord", ok: false, reason });
@@ -61,5 +73,5 @@ export async function send(input: NotifyInput, deps: any = {}): Promise<{ ok: bo
   // 3. stdout
   if (typeof deps.out === "function") deps.out(text);
   attempts.push({ adapter: "stdout", ok: true });
-  return { ok: true, via: "stdout", attempts };
+  return finish(true, "stdout");
 }
