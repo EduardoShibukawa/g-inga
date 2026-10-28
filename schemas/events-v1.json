@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ginga/events-v1.json",
+  "title": "Envelope de eventos ginga v1",
+  "type": "object",
+  "required": ["v", "ts", "source", "kind", "id"],
+  "properties": {
+    "v": { "type": "integer", "const": 1 },
+    "ts": { "type": "string", "format": "date-time" },
+    "source": { "type": "string" },
+    "kind": {
+      "type": "string",
+      "enum": ["attempt", "receipt", "transition", "blocker", "answer", "budget", "quota", "handoff", "learning"]
+    },
+    "id": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+    "repo": { "type": "string" },
+    "intent": { "type": "string" },
+    "spec": { "type": "string" },
+    "plan": { "type": "string" },
+    "task": { "type": "string" },
+    "data": { "type": "object" }
+  },
+  "additionalProperties": true
+}

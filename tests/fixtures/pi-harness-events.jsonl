@@ -1,0 +1,7 @@
+{"kind":"attempt","ts":"2026-10-22T19:11:29.371Z","specId":"0043","taskId":"task-0043-5","runner":"opencode","provider":"opencode","model":"nemotron-3-ultra-free","tier":"free","passed":false,"durationMs":240082,"tokens":161450,"costUsd":0,"costSource":"free","failure":"quota_exhausted","quotaExhausted":true,"source":"harness-task"}
+{"kind":"attempt","ts":"2026-10-22T19:15:29.617Z","specId":"0043","taskId":"task-0043-5","runner":"opencode","provider":"opencode","model":"nemotron-3.5-lightning-free","tier":"free","passed":false,"durationMs":240099,"tokens":314285,"costUsd":0,"costSource":"free","failure":"quota_exhausted","quotaExhausted":true,"source":"harness-task"}
+{"kind":"verify","ts":"2026-10-22T19:46:58.855Z","specId":"0018","sha":"774b56e99f3053209f5aa5d8e21440e12aac4932","feature":"features/0018_machine_wide_tui.feature","passed":3,"failed":0}
+{"kind":"verify","ts":"2026-10-22T19:50:14.917Z","specId":"0043","sha":"10ab65e9dd68b6ecfab90cadce6119fc2bfaefcf","feature":"features/0043_harness_ui.feature","passed":9,"failed":0}
+{"kind":"verify","ts":"2026-10-22T20:11:00.000Z","specId":"0040","sha":"112840bc379c71aaaaaaaaaaaaaaaaaaaaaaaaaa","feature":"features/0040_exemplo.feature","passed":4,"failed":2}
+{"kind":"attempt","ts":"2026-10-22T23:58:26.000Z","specId":"0043","taskId":"task-0043-5","runner":"manual","provider":"manual","model":"merge-manual-9af5ce8","tier":"free","passed":true,"durationMs":0,"costSource":"unknown","source":"claude"}
+isto nao e json

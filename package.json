@@ -1,0 +1,12 @@
+{
+  "name": "ginga",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "ginga": "bin/ginga.ts"
+  },
+  "scripts": {
+    "test": "bun test"
+  }
+}
