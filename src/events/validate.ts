@@ -16,7 +16,7 @@ const KINDS: Record<string, DataSpec> = {
     booleans: ["passed"],
     strings: ["runtime", "provider", "model", "family", "tier", "failure", "cost_source"],
     enums: { failure: ["done_when", "quota_exhausted", "timeout", "infra", "judge"] },
-    numbers: ["attempt_n", "duration_ms", "tokens_in", "tokens_out"],
+    numbers: ["attempt_n", "duration_ms", "tokens_in", "tokens_out", "cost_usd"],
   },
   receipt: {
     // `check: "bdd"` (pi-harness) não tem ledger: ledger_n/hash só são
