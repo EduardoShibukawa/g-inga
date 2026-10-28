@@ -52,6 +52,23 @@ async function open(path: string) {
 }
 const rows = (db: any, sql: string): any[] => db.query(sql).all();
 
+describe("resolveStateDbPath (T19)", () => {
+  const r = async () => (await import(join(ROOT, "src", "state", "db.ts"))).resolveStateDbPath;
+  test("usa GINGA_STATE_DB quando definida; senão fica no root dado, como o tick", async () => {
+    const resolve = await r();
+    const saved = process.env.GINGA_STATE_DB;
+    process.env.GINGA_STATE_DB = "/tmp/db-c." + process.pid;
+    try {
+      expect(resolve("/w1")).toBe("/tmp/db-c." + process.pid);
+    } finally {
+      if (saved === undefined) delete process.env.GINGA_STATE_DB;
+      else process.env.GINGA_STATE_DB = saved;
+    }
+    delete process.env.GINGA_STATE_DB;
+    expect(resolve("/w2")).toBe(join("/w2", ".ginga", "state", "state.db"));
+  });
+});
+
 describe("openStateDb", () => {
   test("cria as quatro tabelas com as colunas do contrato", async () => {
     const w = ws();
