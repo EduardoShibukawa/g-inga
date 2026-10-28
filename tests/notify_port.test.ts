@@ -26,7 +26,7 @@ const mod = async (): Promise<any> => {
 };
 
 type Deps = Record<string, any>;
-function deps(o: { hermes?: { exitCode: number; stderr?: string } | "throw"; http?: number | "throw"; env?: Record<string, string>; config?: any } = {}) {
+function deps(o: { hermes?: { exitCode: number; stderr?: string; stdout?: string } | "throw"; http?: number | "throw"; httpBody?: string; env?: Record<string, string>; config?: any } = {}) {
   const spawned: string[][] = [];
   const fetched: { url: string; init: any }[] = [];
   const out: string[] = [];
@@ -38,18 +38,51 @@ function deps(o: { hermes?: { exitCode: number; stderr?: string } | "throw"; htt
       spawned.push(cmd);
       if (o.hermes === "throw") throw new Error("spawn hermes ENOENT");
       const h = o.hermes ?? { exitCode: 0 };
-      return { exitCode: h.exitCode, stdout: "", stderr: h.stderr ?? "" };
+      return { exitCode: h.exitCode, stdout: h.stdout ?? "", stderr: h.stderr ?? "" };
     },
     fetch: async (url: string, init: any) => {
       fetched.push({ url, init });
       if (o.http === "throw") throw new Error("rede caiu");
       const status = o.http ?? 200;
-      return new Response("{}", { status });
+      return new Response(o.httpBody ?? "{}", { status });
     },
   };
   return { d, spawned, fetched, out };
 }
 const DISCORD_ENV = { DISCORD_BOT_TOKEN: "tok", DISCORD_CHANNEL_ID: "999" };
+
+/**
+ * T22 (achado do judge): o router só persiste a thread por PLAN quando `send`
+ * devolve `thread_id` — o port nunca devolvia. Contrato novo:
+ * - hermes ok: `thread_id` = o id que o hermes imprime no stdout (`thread_id=<id>`),
+ *   senão o `input.thread` já usado, senão ausente;
+ * - discord ok: `thread_id` = o `input.thread` usado no POST, senão ausente;
+ * - stdout: sem thread_id.
+ */
+describe("port devolve thread_id", () => {
+  const mod = async (): Promise<any> => import(join(ROOT, "src", "notify", "port.ts"));
+  test("hermes cria a thread e imprime thread_id no stdout → devolvido", async () => {
+    const m = await mod();
+    const { d } = deps({ hermes: { exitCode: 0, stdout: "enviado em thread_id=55512\n" } });
+    const r = await m.send({ target: "discord:123", text: "olá" }, d);
+    expect(r.via).toBe("hermes");
+    expect(r.thread_id).toBe("55512");
+  });
+
+  test("thread já conhecida (input.thread) é devolvida nos dois caminhos", async () => {
+    const m = await mod();
+    const { d: d1 } = deps({ hermes: { exitCode: 0 } });
+    expect((await m.send({ target: "discord:123", text: "olá", thread: "444" }, d1)).thread_id).toBe("444");
+    const { d: d2 } = deps({ hermes: { exitCode: 1, stderr: "x" }, env: DISCORD_ENV, config: {} });
+    expect((await m.send({ target: "discord:123", text: "olá", thread: "444" }, d2)).thread_id).toBe("444");
+  });
+
+  test("sem thread criada nem conhecida: sem thread_id", async () => {
+    const m = await mod();
+    const { d } = deps({ hermes: { exitCode: 0, stdout: "" } });
+    expect((await m.send({ target: "discord:123", text: "olá" }, d)).thread_id).toBeUndefined();
+  });
+});
 
 describe("hermes primeiro", () => {
   test("hermes ok: um spawn com -t plataforma:chat:thread e nenhuma chamada HTTP", async () => {

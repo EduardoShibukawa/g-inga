@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -67,6 +67,90 @@ async function harness(evs: any[], o: { threadFor?: (plan: string) => string | u
   return { db, add, sent, run, rules };
 }
 const chans = (sent: { target: string }[]) => sent.map((s) => s.target.split(":")[0]).sort();
+
+describe("routePending (serve)", () => {
+  // T23: o serve ingere $GINGA_EVENTS antes de rotear, abre o db pelo root
+  // ($GINGA_STATE_DB ou <root>/.ginga/state/state.db, como o tick) e fornece
+  // `fetch` ao port — a cadeia de fallback (discord) funciona sem o hermes.
+  test("ingere antes de rotear, db no root e fallback discord com fetch injetável", async () => {
+    const { router, dbmod } = await load();
+    const serve: any = await import(join(ROOT, "src", "serve.ts"));
+    expect(dbmod.resolveStateDbPath).toBeDefined();
+    const dir = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), "ginga-routepending-")));
+    dirs.push(dir);
+    const dbPath = join(dir, "state.db");
+    const stateDir = join(dir, ".ginga", "state");
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(join(dir, ".ginga", "project.toml"), [
+      "[notify.targets]",
+      'discord = "discord:123"',
+      "[notify.rules]",
+      'blocker = ["discord"]',
+    ].join("\n"));
+    const eventsPath = join(dir, "events.jsonl");
+    const e1 = BLOCKER();
+    writeFileSync(eventsPath, JSON.stringify(e1) + "\n");
+    const fetched: { url: string; init: any }[] = [];
+    const deps = {
+      spawn: async (_cmd: string[]) => ({ exitCode: 1, stderr: "hermes down" }),
+      fetch: async (url: string, init: any) => {
+        fetched.push({ url, init });
+        return new Response(JSON.stringify({ id: "m1" }), { status: 200, headers: { "content-type": "application/json" } });
+      },
+    };
+    const savedEnv = process.env.GINGA_STATE_DB;
+    process.env.GINGA_STATE_DB = dbPath;
+    process.env.GINGA_EVENTS = eventsPath;
+    try {
+      const routed = await serve.routePending(dir, deps);
+      expect(routed).toBe(1);
+      // db no GINGA_STATE_DB (não pelo cwd), com o evento ingerido e marcado como notificado
+      const db = dbmod.openStateDb(dbPath);
+      expect(db.query("SELECT id FROM events WHERE id = ?").get(e1.id)).not.toBeNull();
+      expect(db.query("SELECT id FROM notification_log WHERE id = ?").get(e1.id)).not.toBeNull();
+      db.close();
+      // hermes falhou e a cadeia caiu para o discord via fetch do port
+      expect(fetched.length).toBe(1);
+      expect(fetched[0]!.url).toBe("https://discord.com/api/v10/channels/123/messages");
+    } finally {
+      if (savedEnv === undefined) delete process.env.GINGA_STATE_DB;
+      else process.env.GINGA_STATE_DB = savedEnv;
+      delete process.env.GINGA_EVENTS;
+    }
+  });
+
+  test("sem $INGA_EVENTS a ingestão é pulada e o roteamento segue com o db existente", async () => {
+    const { router, dbmod } = await load();
+    const serve: any = await import(join(ROOT, "src", "serve.ts"));
+    const dir = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), "ginga-routepending2-")));
+    dirs.push(dir);
+    const dbPath = join(dir, "state.db");
+    writeFileSync(join(dir, ".ginga", "project.toml"), [
+      "[notify.targets]",
+      'discord = "discord:123"',
+    ].join("\n"));
+    const db = dbmod.openStateDb(dbPath);
+    const ev = BLOCKER();
+    db.run("INSERT INTO events(id, ts, kind, plan, task, json) VALUES(?, ?, ?, ?, ?, ?)", [ev.id, ev.ts, ev.kind, ev.plan, ev.task, JSON.stringify(ev)]);
+    db.close();
+    const savedEnv = process.env.GINGA_STATE_DB;
+    process.env.GINGA_STATE_DB = dbPath;
+    delete process.env.GINGA_EVENTS;
+    const spawned: string[][] = [];
+    try {
+      const routed = await serve.routePending(dir, {
+        spawn: async (cmd: string[]) => { spawned.push(cmd); return { exitCode: 0, stdout: "", stderr: "" }; },
+      });
+      expect(routed).toBe(1);
+      expect(spawned.length).toBe(1);
+      expect(spawned[0]!.slice(0, 2)).toEqual(["hermes", "send"]);
+      expect(spawned[0]![3]).toBe("discord:123");
+    } finally {
+      if (savedEnv === undefined) delete process.env.GINGA_STATE_DB;
+      else process.env.GINGA_STATE_DB = savedEnv;
+    }
+  });
+});
 
 describe("regras", () => {
   test("classify e DEFAULT_RULES seguem 05 §6", async () => {
