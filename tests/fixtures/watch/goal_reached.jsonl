@@ -1,0 +1,3 @@
+{"v":1,"ts":"2026-10-28T21:00:00.000Z","source":"gate","kind":"gate.result","id":"01JABCDEFGHJKMNPQRSTVWXYZ1","data":{"plan":"PLAN-0022","repo":"duh-homelab","code":0}}
+{"v":1,"ts":"2026-10-28T21:30:00.000Z","source":"gate","kind":"gate.result","id":"01JABCDEFGHJKMNPQRSTVWXYZ2","data":{"plan":"PLAN-0023","repo":"duh-homelab","code":0}}
+{"v":1,"ts":"2026-10-28T21:31:00.000Z","source":"gate","kind":"alvo.check","id":"01JABCDEFGHJKMNPQRSTVWXYZ3","data":{"check":"receipts_done","ok":true}}

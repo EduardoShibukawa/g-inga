@@ -1,0 +1,3 @@
+{"v":1,"ts":"2026-10-28T12:00:00.000Z","source":"beam-free","kind":"heartbeat","id":"01JABCDEFGHJKMNPQRSTVWXYZ1","data":{"entity":"executor/beam-free","pid":4242,"progress":7,"runtime":"opencode","cpu_pct":0,"alive":true}}
+{"v":1,"ts":"2026-10-28T12:41:00.000Z","source":"beam-free","kind":"heartbeat","id":"01JABCDEFGHJKMNPQRSTVWXYZ2","data":{"entity":"executor/beam-free","pid":4242,"progress":7,"runtime":"opencode","cpu_pct":1,"alive":true}}
+{"v":1,"ts":"2026-10-28T12:59:00.000Z","source":"beam-free","kind":"heartbeat","id":"01JABCDEFGHJKMNPQRSTVWXYZ3","data":{"entity":"executor/beam-free","pid":4242,"progress":7,"runtime":"opencode","cpu_pct":0,"alive":true}}

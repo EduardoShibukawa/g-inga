@@ -1,6 +1,7 @@
-// Tabela de kinds/data do 07 (docs/events-v1.md). Campos de data com enum
-// são checados; os demais são aceitos do tipo certo. Campos desconhecidos
-// (no envelope ou dentro de data) são ignorados.
+// Tabela de kinds/data do 07 (docs/events-v1.md) + kinds do vigia
+// (SPEC-0003 / PLAN-0023). Campos de data com enum são checados; os demais
+// são aceitos do tipo certo. Campos desconhecidos (no envelope ou dentro
+// de data) são ignorados.
 
 type DataSpec = {
   required: string[];
@@ -67,6 +68,30 @@ const KINDS: Record<string, DataSpec> = {
     strings: ["learning_id"],
     enums: { status: ["confirmada", "descartada", "fato", "armadilha"] },
     booleans: ["promoted"],
+  },
+  // Kinds do vigia (SPEC-0003 / PLAN-0023). `progress` é contador de efeito
+  // real (arquivos alterados, commits, receipts, saída de ferramenta) —
+  // nunca "processo vivo" nem "log cresceu".
+  heartbeat: {
+    required: ["entity", "pid", "progress"],
+    strings: ["entity", "runtime", "last_event_at"],
+    numbers: ["pid", "progress", "cpu_pct", "attempt_n"],
+    booleans: ["alive"],
+  },
+  "lane.round": {
+    required: ["lane", "phase"],
+    strings: ["lane", "reason"],
+    enums: { phase: ["start", "end"] },
+  },
+  "gate.result": {
+    required: ["plan", "repo", "code"],
+    strings: ["plan", "repo"],
+    numbers: ["code"],
+  },
+  "alvo.check": {
+    required: ["check", "ok"],
+    strings: ["check"],
+    booleans: ["ok"],
   },
 };
 

@@ -1,0 +1,2 @@
+{"v":1,"ts":"2026-10-28T18:00:00.000Z","source":"vigia","kind":"heartbeat","id":"01JABCDEFGHJKMNPQRSTVWXYZ1","data":{"entity":"repo/duh-homelab","pid":71,"progress":41,"runtime":"git","last_event_at":"2026-10-28T17:58:00.000Z","cpu_pct":0,"alive":true}}
+{"v":1,"ts":"2026-10-28T18:05:00.000Z","source":"vigia","kind":"heartbeat","id":"01JABCDEFGHJKMNPQRSTVWXYZ2","data":{"entity":"repo/duh-homelab","pid":71,"progress":42,"runtime":"git","last_event_at":"2026-10-28T18:04:30.000Z","cpu_pct":1,"alive":true}}
