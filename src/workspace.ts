@@ -23,7 +23,10 @@ export function findWorkspace(fromDir: string): string {
 }
 
 /** Onde está o binário `name` no PATH, ou null. Caminho calculado agora:
- *  nada de PATH congelado em código ou config. */
+ *  nada de PATH congelado em código ou config. O 2º argumento importa: sem
+ *  ele `Bun.which` usa o snapshot de PATH tirado no boot do processo, e em
+ *  chamada in-process (API/`run` direto) isso ignoraria o PATH atual e
+ *  resolveria o binário real, não o que o chamador pôs na frente. */
 export function binary(name: string): string | null {
-  return Bun.which(name) ?? null;
+  return Bun.which(name, { PATH: process.env.PATH ?? "" }) ?? null;
 }
