@@ -12,6 +12,9 @@
 import { readFileSync, watch } from "node:fs";
 import { join } from "node:path";
 import { runTick } from "./tick.ts";
+import { parseCommands } from "./tick.ts";
+import { Supervisor, parseSupervisorConfig } from "./supervisor.ts";
+export * from "./supervisor.ts";
 import { routeEvents } from "./notify/router.ts";
 import { send as portSend } from "./notify/port.ts";
 import { openStateDb, resolveStateDbPath } from "./state/db.ts";
@@ -247,6 +250,33 @@ export async function runServe(args: string[]): Promise<number> {
     } catch (e) {
       console.error(`serve: sem watch de eventos em ${eventsPath}: ${(e as Error).message}`);
     }
+  }
+
+  // Supervisor de lanes (PLAN-0023 TASK-03): opcional, configurado por
+  // [supervisor] no project.toml ou GINGA_SUPERVISOR_LANES. Roda em
+  // segundo plano; não bloqueia o serve.
+  let rawProject = "";
+  try { rawProject = readFileSync(join(base, ".ginga", "project.toml"), "utf8"); } catch {}
+  const supCfg = parseSupervisorConfig(rawProject);
+  const cmds = parseCommands(rawProject);
+  const envLanes = process.env.GINGA_SUPERVISOR_LANES;
+  if (envLanes) {
+    for (const part of envLanes.split(";")) {
+      const p = part.trim();
+      if (!p) continue;
+      const eq = p.indexOf("=");
+      if (eq > 0) supCfg.lanes.push({ repo: p.slice(0, eq).trim(), command: p.slice(eq + 1).trim() });
+    }
+  }
+  if (supCfg.lanes.length > 0) {
+    const sup = new Supervisor(supCfg.lanes, {
+      root: base,
+      backoffBaseMs: supCfg.backoffBaseMs,
+      backoffMaxMs: supCfg.backoffMaxMs,
+      maxRestarts: supCfg.maxRestarts,
+      queueCommand: (cmds as any).queue,
+    });
+    void sup.run();
   }
 
   // O CLI (fachada sync) pode morrer antes do worker: novo pai ⇒ órfão ⇒ sai.

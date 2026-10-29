@@ -9,6 +9,7 @@
 
 import type { Database } from "bun:sqlite";
 import { classify, DEFAULT_RULES } from "./rules.ts";
+import { drain as drainQueue, hasPending as queueHasPending } from "./queue.ts";
 
 export type RouteSendInput = { target: string; text: string; thread?: string };
 export type RouteSendResult = { ok: boolean; thread_id?: string };
@@ -39,11 +40,17 @@ export async function routeEvents(
 ): Promise<{ routed: number }> {
   db.run(MARKED_TABLE);
   const rules = { ...DEFAULT_RULES, ...(o.rules ?? {}) };
+  let routed = 0;
+  if (queueHasPending(db)) {
+    try {
+      const drained = await drainQueue(db, { send: o.send, targets: o.targets, mention: o.mention, rules: o.rules });
+      routed += drained.routed ?? drained.sent ?? 0;
+    } catch {}
+  }
   const rows = db
     .query("SELECT id, json FROM events WHERE id NOT IN (SELECT id FROM notification_log)")
     .all() as { id: string; json: string }[];
 
-  let routed = 0;
   for (const row of rows) {
     let ev: Record<string, any>;
     try {
