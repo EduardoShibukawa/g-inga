@@ -1,0 +1,4 @@
+# Fixtures = fonte versionada dos hooks. No uso real, vive em .ginga/ no root.
+[git]
+repos = ["repoA", "repoB"]
+hooks = ["reference-transaction"]

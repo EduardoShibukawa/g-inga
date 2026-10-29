@@ -1,0 +1,17 @@
+#!/bin/sh
+# ginga-managed hook: reference-transaction
+# Recusa qualquer update de refs/heads/main sem MERGE_GATE=1 (merge, ff, reset, commit direto na main).
+# Encadeia o hook pré-existente de mesmo nome (renomeado para <hook>.ginga-prev) depois do nosso guard.
+blocked=0
+while read -r _old _new ref; do
+  case "$ref" in
+    refs/heads/main) blocked=1 ;;
+  esac
+done
+if [ "$blocked" = 1 ] && [ "$MERGE_GATE" != "1" ]; then
+  echo "BLOQUEADO (ginga reference-transaction): update de refs/heads/main sem MERGE_GATE=1" >&2
+  exit 1
+fi
+prev="$(dirname "$0")/reference-transaction.ginga-prev"
+if [ -x "$prev" ]; then exec "$prev" "$@"; fi
+exit 0
