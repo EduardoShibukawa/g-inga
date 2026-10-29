@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStateDb } from "../src/state/db";
@@ -52,8 +52,23 @@ function cli(fx: Fx, argv: string[]) {
   return { code: p.exitCode, out: p.stdout.toString(), err: p.stderr.toString() };
 }
 
+// Binários stub (exit 0, mudo) para os verbos de operação que delegam ao PATH
+// (PLAN-0015 TASK-07): a comparação CLI × run direto precisa de um `pinga`/`gira`
+// determinístico — nunca o real.
+function stubBin(names: string[]): string {
+  const dir = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), "ginga-clistub-")));
+  dirs.push(dir);
+  for (const n of names) {
+    writeFileSync(join(dir, n), "#!/bin/sh\nexit 0\n");
+    chmodSync(join(dir, n), 0o755);
+  }
+  return dir;
+}
+
 // Um caso por verbo do registro: argv posicional (+ flags) e os args equivalentes do `run`.
-const CASES: Record<string, { argv: string[]; args: Record<string, string> }> = {
+// `via` força o mesmo ctx dos dois lados (ctl/tui/hermes/hud só agem em CLI com tty);
+// `bin` prepõe stubs no PATH para os que delegam a binários externos.
+const CASES: Record<string, { argv: string[]; args: Record<string, string>; via?: string; bin?: string[] }> = {
   "intent new": { argv: ["intent", "new", "Quero login com OAuth"], args: { text: "Quero login com OAuth" } },
   approve: { argv: ["approve", "PLAN-0001"], args: { id: "PLAN-0001" } },
   reject: { argv: ["reject", "SPEC-0001", "escopo grande"], args: { id: "SPEC-0001", reason: "escopo grande" } },
@@ -71,6 +86,15 @@ const CASES: Record<string, { argv: string[]; args: Record<string, string> }> = 
   board: { argv: ["board"], args: {} },
   inbox: { argv: ["inbox"], args: {} },
   watch: { argv: ["watch", "PLAN-0001"], args: { target: "PLAN-0001" } },
+  // Operação (PLAN-0015 TASK-03; cobertura TASK-07): tty-guards via `api`, delegações com stub no PATH.
+  ctl: { argv: ["ctl"], args: {}, via: "api" },
+  web: { argv: ["web", "status"], args: { action: "status" } },
+  tui: { argv: ["tui"], args: {}, via: "api" },
+  hermes: { argv: ["hermes"], args: {}, via: "api" },
+  hud: { argv: ["hud", "testando"], args: { arg1: "testando" }, via: "api" },
+  verify: { argv: ["verify", "tasks/T1/PLAN.md"], args: { arg1: "tasks/T1/PLAN.md" }, bin: ["pinga"] },
+  maestro: { argv: ["maestro", "scoreboard"], args: { arg1: "scoreboard" }, bin: ["pinga"] },
+  gira: { argv: ["gira", "outline", "src/a.ts"], args: { arg1: "outline", arg2: "src/a.ts" }, bin: ["gira"] },
 };
 
 describe("CLI gerada do registro", () => {
@@ -83,11 +107,17 @@ describe("CLI gerada do registro", () => {
       const c = CASES[verb.name]!;
       const viaCli = fixture();
       const direct = fixture();
-      const r = cli(viaCli, [...c.argv, "--by", "eduardo", "--json"]);
-      expect(r.err).toBe("");
-      expect(r.code).toBe(0);
-      const expected = await runVerb(verb.name, direct.ctx, c.args);
-      expect(JSON.parse(r.out)).toEqual(JSON.parse(JSON.stringify(expected)));
+      const origPath = process.env.PATH ?? "";
+      if (c.bin) process.env.PATH = `${stubBin(c.bin)}:${origPath}`;
+      try {
+        const r = cli(viaCli, [...c.argv, "--by", "eduardo", "--json", ...(c.via ? ["--via", c.via] : [])]);
+        expect(r.err).toBe("");
+        expect(r.code).toBe(0);
+        const expected = await runVerb(verb.name, { ...direct.ctx, via: c.via ?? "cli" }, c.args);
+        expect(JSON.parse(r.out)).toEqual(JSON.parse(JSON.stringify(expected)));
+      } finally {
+        process.env.PATH = origPath;
+      }
     });
   }
 
