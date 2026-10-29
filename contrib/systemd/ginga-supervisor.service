@@ -1,0 +1,16 @@
+# PLAN-0023 TASK-03: supervisor de lanes (ginga serve), --user.
+# Supervisiona as lanes (uma por repo, via manda pipeline) com backoff e
+# parada quando não há pendência. Instalar com:
+#   systemctl --user enable --now ginga-supervisor.service
+
+[Unit]
+Description=ginga supervisor: lanes por repo com backoff e vigia
+Documentation=docs/hermes-cron.md
+
+[Service]
+ExecStart=/usr/bin/env ginga serve
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
