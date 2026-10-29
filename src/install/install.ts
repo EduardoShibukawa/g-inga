@@ -9,6 +9,7 @@ import {
   rmSync,
   symlinkSync,
   unlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import { claudeAdapter } from "./adapters/claude";
@@ -690,7 +691,13 @@ export async function installCmd(opts: InstallOptions): Promise<number> {
     }
 
     if (opts.mode === "revert") {
-      return await revertCmd(opts, manifestPath);
+      const rc = await revertCmd(opts, manifestPath);
+      if (rc === 0) {
+        try {
+          rmSync(join(opts.home, ".config", "systemd", "user", "ginga-supervisor.service"), { force: true });
+        } catch {}
+      }
+      return rc;
     }
 
     if (adapters.some((a) => a.harness === "claude")) {
@@ -945,6 +952,19 @@ export async function installCmd(opts: InstallOptions): Promise<number> {
     }
 
     // 4. --apply: nada real a escrever (idempotência, I16/manifest intocado).
+    // PLAN-0023 follow-up 2: instala a unidade systemd do supervisor em modo
+    // no-op (sem alvos de adaptador) — ex.: adapters: [] nos testes.
+    if (opts.mode === "apply" && dirtyFiles.size === 0 && unlinkFiles.size === 0) {
+      try {
+        const unitSrc = join(import.meta.dir, "..", "..", "contrib", "systemd", "ginga-supervisor.service");
+        if (existsSync(unitSrc)) {
+          const unitDst = join(opts.home, ".config", "systemd", "user", "ginga-supervisor.service");
+          mkdirSync(dirname(unitDst), { recursive: true });
+          writeFileSync(unitDst, readFileSync(unitSrc));
+        }
+      } catch {}
+      return INSTALL_EXIT.ok;
+    }
     if (dirtyFiles.size === 0 && unlinkFiles.size === 0) {
       return INSTALL_EXIT.ok;
     }
@@ -966,6 +986,19 @@ export async function installCmd(opts: InstallOptions): Promise<number> {
         "pinga install: --apply exige um --dry-run prévio com o mesmo diff (revise com pinga install --dry-run)",
       );
       return INSTALL_EXIT.usage;
+    }
+
+    // PLAN-0023 follow-up 2: instala a unidade systemd do supervisor após
+    // validação do dry-run, junto com os alvos dos adaptadores.
+    if (opts.mode === "apply") {
+      try {
+        const unitSrc = join(import.meta.dir, "..", "..", "contrib", "systemd", "ginga-supervisor.service");
+        if (existsSync(unitSrc)) {
+          const unitDst = join(opts.home, ".config", "systemd", "user", "ginga-supervisor.service");
+          mkdirSync(dirname(unitDst), { recursive: true });
+          writeFileSync(unitDst, readFileSync(unitSrc));
+        }
+      } catch {}
     }
 
     // 5. Backup por sha256, cópia atômica sombra -> real, conferência.

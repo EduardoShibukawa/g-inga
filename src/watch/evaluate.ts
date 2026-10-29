@@ -173,13 +173,17 @@ export function evaluateWatch(events: any[], rules?: any[]): Alert[] {
     }
   }
 
-  // goal_reached: gate.result code 0 presentes + alvo.check ok.
+  // goal_reached: todos os gate.result code 0 + todos os alvo.check ok + sem pendência.
   if (has("goal_reached")) {
     const gates = evs.filter((e) => e?.kind === "gate.result");
     const alvos = evs.filter((e) => e?.kind === "alvo.check");
+    const rounds = evs.filter((e) => e?.kind === "lane.round");
+    const starts = rounds.filter((e) => e?.data?.phase === "start");
+    const ends = new Set(rounds.filter((e) => e?.data?.phase === "end").map((e) => e?.data?.lane));
+    const hasPendingLane = starts.some((s) => !ends.has(s?.data?.lane));
     const allPass = gates.length > 0 && gates.every((g) => num(g?.data?.code) === 0);
-    const alvoOk = alvos.length > 0 && alvos.some((a) => a?.data?.ok === true);
-    if (allPass && alvoOk) {
+    const alvoOk = alvos.length > 0 && alvos.every((a) => a?.data?.ok === true);
+    if (allPass && alvoOk && !hasPendingLane) {
       const sevV = sev(effectiveRules, "goal_reached", "info");
       const act = action(effectiveRules, "goal_reached");
       push("goal_reached", sevV, "goal", "nenhuma pendência e checks do ALVO verdes", act ?? "notify_done");

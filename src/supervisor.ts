@@ -124,15 +124,12 @@ export class Supervisor {
     let backoff = base;
     let restarts = 0;
     let runs = 0;
-    let iterations = 0;
-    const maxIterations = (opts as any).maxIterations ?? 10;
     let stoppedReason = "max_restarts";
 
-    while (!this.stopFlag.value && iterations < maxIterations) {
-      iterations++;
+    while (!this.stopFlag.value) {
       const pending = await hasPending(lane, opts);
       if (!pending) {
-        await doEmit({ source: "ginga", kind: "lane.round", data: { lane: lane.repo, phase: "end" } }, opts.emit);
+        await doEmit({ source: "ginga", kind: "lane.round", data: { lane: lane.repo, phase: "end", reason: "no_pending" } }, opts.emit);
         stoppedReason = "no_pending";
         break;
       }

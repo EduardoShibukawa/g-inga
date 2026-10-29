@@ -99,6 +99,7 @@ const KINDS: Record<string, DataSpec> = {
     enums: { severity: ["info", "warn", "high", "critical"] },
     booleans: [],
     numbers: [],
+    stringArrays: ["actions"],
   },
 
 };
@@ -172,6 +173,14 @@ export function validateEvent(ev: unknown): { ok: boolean; errors: string[] } {
       for (const campo of spec.numbers ?? []) {
         if (data[campo] !== undefined && typeof data[campo] !== "number") {
           errors.push(`data.${campo} deve ser número`);
+        }
+      }
+      for (const campo of (spec as any).stringArrays ?? []) {
+        if (data[campo] !== undefined) {
+          const v = data[campo];
+          if (!Array.isArray(v) || !v.every((x: unknown) => typeof x === "string")) {
+            errors.push(`data.${campo} deve ser lista de strings`);
+          }
         }
       }
     }

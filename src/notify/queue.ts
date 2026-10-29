@@ -134,7 +134,7 @@ function buildDigest(items: QueueItem[]): string {
 }
 
 export type DrainOptions = {
-  send?: (input: { target: string; text: string; thread?: string }) => Promise<any>;
+  send?: (input: { target: string; text: string; thread?: string; items?: any[] }) => Promise<any>;
   target?: string;
   targets?: Record<string, string>;
   mention?: string;
@@ -183,7 +183,7 @@ export async function drain(db: Database, opts: DrainOptions = {}): Promise<Drai
     if (target === "") continue;
     const finalText = group.length > 1 ? buildDigest(group) : (group[0]!.text ?? group[0]!.summary ?? "");
     try {
-      const res = await send({ target, text: finalText });
+      const res = await send({ target, text: finalText, items: group });
       const ok = res === undefined ? true : (res?.ok !== false);
       if (ok) {
         for (const it of group) ack(db, it.id);
