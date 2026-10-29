@@ -7,6 +7,7 @@ export { defaultRules } from "./rules.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { emitEvent } from "../events/emit.ts";
+import { enqueue } from "../notify/queue.ts";
 import { openStateDb, resolveStateDbPath } from "../state/db.ts";
 import { parseRulesToml, defaultRules } from "./rules.ts";
 import { evaluateWatch } from "./evaluate.ts";
@@ -66,6 +67,16 @@ export function watchCmd(args: string[]): number {
       emitEvent({ source: "ginga", kind: "alert", data: { rule_id: a.rule_id, severity: a.severity, entity: a.entity, summary: a.summary, dedupe_key: a.dedupe_key, actions: a.actions } });
     } catch {}
   }
+  // Fila durável: alertas entram na notification_queue para entrega pelo menos uma vez.
+  try {
+    const db = openStateDb(resolveStateDbPath(base));
+    for (const a of alerts) {
+      try {
+        enqueue(db, { dedupe_key: a.dedupe_key, severity: a.severity, entity: a.entity, summary: a.summary, text: a.summary });
+      } catch {}
+    }
+    db.close();
+  } catch {}
 
   if (json) {
     console.log(JSON.stringify(alerts));
