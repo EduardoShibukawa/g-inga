@@ -231,7 +231,7 @@ export function evaluateWatch(events: any[], rules?: any[]): Alert[] {
       }
       if (open > 0) { hasPendingLane = true; break; }
     }
-    const allPass = gates.length > 0 && gates.every((g) => num(g?.data?.code) === 0);
+    const allPass = gates.length > 0 && gates.every((g) => typeof g?.data?.code === "number" && g.data.code === 0);
     const alvoOk = alvos.length > 0 && alvos.every((a) => a?.data?.ok === true);
     if (allPass && alvoOk && !hasPendingLane) {
       const sevV = sev(effectiveRules, "goal_reached", "info");
