@@ -4,6 +4,8 @@
 // Emite heartbeat / lane.round em $GINGA_EVENTS quando definido.
 
 import { spawn } from "node:child_process";
+import { dirname, join } from "node:path";
+import { mkdirSync, statSync, writeFileSync } from "node:fs";
 
 export type Lane = {
   repo: string;
@@ -21,6 +23,7 @@ export type SupervisorOptions = {
   progressCheck?: (lane: Lane) => number | Promise<number>;
   heartbeatMs?: number;
   idleCooldownMs?: number;
+  freeExhaustedFile?: string;
   sleep?: (ms: number) => Promise<void>;
   spawn?: (cmd: string, opts: { cwd?: string; env?: Record<string, string | undefined> }) => any;
   emit?: (ev: Record<string, unknown>) => void;
@@ -222,6 +225,50 @@ export class Supervisor {
           resolve(1);
         });
       });
+
+      // TASK-24 / T115: códigos especiais de saída — não são falha comum.
+      // exit 20 (main movida fora do gate, como no lane.sh): para a lane em
+      // definitivo com alerta crítico e não consome restarts.
+      if (exitCode === 20) {
+        await doEmit({ source: "ginga", kind: "lane.round", data: { lane: lane.repo, phase: "end", code: exitCode } }, opts.emit);
+        await doEmit(
+          {
+            source: "ginga",
+            kind: "alert",
+            data: {
+              rule_id: "main_moved_outside_gate",
+              severity: "critical",
+              entity: `lane:${lane.repo}`,
+              summary: `lane ${lane.repo} parada: main movida fora do gate (exit 20)`,
+            },
+          },
+          opts.emit,
+        );
+        stoppedReason = "main_moved";
+        break;
+      }
+
+      // exit 4 (cota free esgotada): pausa até fechar a janela de 60 min desde
+      // o arquivo de esgotamento, sem consumir restarts e sem novo spawn na
+      // janela; ao voltar ao topo do laço a pendência é reconferida.
+      if (exitCode === 4) {
+        await doEmit({ source: "ginga", kind: "lane.round", data: { lane: lane.repo, phase: "end", code: exitCode } }, opts.emit);
+        const FREE_WINDOW_MS = 3_600_000;
+        const pauseFile = opts.freeExhaustedFile ?? join(root, ".ginga", "handoffs", ".free-esgotado");
+        let ageMs = 0;
+        try {
+          ageMs = Date.now() - statSync(pauseFile).mtimeMs;
+        } catch {
+          try {
+            mkdirSync(dirname(pauseFile), { recursive: true });
+            writeFileSync(pauseFile, "");
+          } catch {
+            // arquivo não pôde ser criado: ainda assim vale a pausa completa
+          }
+        }
+        await sleep(Math.max(0, FREE_WINDOW_MS - ageMs));
+        continue;
+      }
 
       const progress = opts.progressCheck ? await opts.progressCheck(lane) : 0;
       if (exitCode === 0) {
