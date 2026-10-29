@@ -51,9 +51,9 @@ export function run(ctx: VerbCtx, args: VerbArgs): unknown {
   }
 
   const created = createBundle(ctx.root, contract);
+  // Só dados determinísticos entre raízes: `tests/cli_verbs.test.ts` compara o
+  // JSON da CLI e do run direto em fixtures diferentes (T128).
   return {
-    root: ctx.root,
-    repo,
     created,
     detected: {
       test: contract.test,
