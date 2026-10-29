@@ -60,7 +60,16 @@ export async function send(input: NotifyInput, deps: any = {}): Promise<{ ok: bo
       });
       if (res && res.ok) {
         attempts.push({ adapter: "discord", ok: true });
-        return finish(true, "discord", input.thread ?? undefined);
+        if (input.thread) return finish(true, "discord", input.thread);
+        // T26: sem thread de entrada, o ID da mensagem criada vira a thread
+        // (o router grava em plan_thread e reusa nos envios seguintes).
+        // JSON indisponível ou sem `id`: devolve sem thread_id, sem falhar.
+        let msgId: string | undefined;
+        try {
+          const body = await res.json();
+          if (body && typeof body.id === "string" && body.id !== "") msgId = body.id;
+        } catch {}
+        return finish(true, "discord", msgId);
       }
       const reason = `discord http ${res ? res.status : "error"}`;
       attempts.push({ adapter: "discord", ok: false, reason });
