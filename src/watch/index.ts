@@ -1,8 +1,10 @@
 export * from "./rules.ts";
 export * from "./evaluate.ts";
+export * from "./ready.ts";
 export { parseRulesToml } from "./rules.ts";
 export { evaluateWatch } from "./evaluate.ts";
 export { defaultRules } from "./rules.ts";
+export { sweepReady } from "./ready.ts";
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -11,6 +13,7 @@ import { enqueue } from "../notify/queue.ts";
 import { openStateDb, resolveStateDbPath } from "../state/db.ts";
 import { parseRulesToml, defaultRules } from "./rules.ts";
 import { evaluateWatch } from "./evaluate.ts";
+import { sweepReady } from "./ready.ts";
 
 function readJsonl(path: string): any[] {
   const raw = readFileSync(path, "utf8");
@@ -52,15 +55,28 @@ export function watchCmd(args: string[]): number {
   }
 
   let rules: any[] = defaultRules();
+  let customRules = false;
   const rulesPath = join(base, ".ginga", "watch", "rules.toml");
   if (existsSync(rulesPath)) {
     try {
       const parsed = parseRulesToml(readFileSync(rulesPath, "utf8"));
-      if (parsed.rules.length > 0) rules = parsed.rules;
+      if (parsed.rules.length > 0) { rules = parsed.rules; customRules = true; }
     } catch {}
   }
 
   const alerts = evaluateWatch(events, rules);
+
+  // Sweep de ready/ (stale_ready + ready_writer): ligado por padrão (as regras padrão de
+  // defaultRules() ficam em 6, tests_frozen) e, com rules.toml próprio, só se ele listar o id.
+  // Idempotente entre ticks: o stale move o arquivo; a deduplicação abaixo usa os dedupe_keys.
+  const hasRule = (id: string) => !customRules || rules.some((r: any) => r && r.id === id);
+  if (hasRule("stale_ready") || hasRule("ready_writer")) {
+    try {
+      for (const a of sweepReady(base)) {
+        if (hasRule(a.rule_id)) alerts.push(a);
+      }
+    } catch {}
+  }
 
   // Idempotencia entre ticks: nao reemitir alerta cujo dedupe_key ja foi
   // emitido (evento kind=alert presente no conjunto de eventos lido).
