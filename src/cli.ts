@@ -18,8 +18,107 @@ import { watchCmd } from "./watch.ts";
 import { doctorCmd } from "./doctor.ts";
 import { adoptLocalEntries } from "./install/adopt.ts";
 import { defaultManifestPath } from "./install/manifest.ts";
+import { VERBS, getVerb, runVerb, type Verb, type VerbArgs } from "./verbs/registry.ts";
+import { openStateDb, resolveStateDbPath } from "./state/db.ts";
 
 export { emitEvent };
+
+// ---------------------------------------------------------------------------
+// CLI gerada do registro (TASK-02/PLAN-0011): dispatch genérico, nenhuma
+// lógica por verbo aqui. `ginga <verbo> [sub] args... [--json] [--via V]
+// [--by N] [--root DIR]`: posicionais na ordem de verb.args; `--<nome> valor`
+// também preenche o argumento. A validação (nome, obrigatórios) é do
+// registro via runVerb — erro do registro → exit 2; falha do verbo → exit 1.
+// ---------------------------------------------------------------------------
+
+function nonEmpty(v: string | undefined): string | undefined {
+  return v !== undefined && v !== "" ? v : undefined;
+}
+
+function helpText(): string {
+  const lines = [
+    "uso: ginga <verbo> [sub] args... [--json] [--via V] [--by N] [--root DIR]",
+    "",
+    "verbos do registro:",
+  ];
+  for (const v of VERBS) {
+    const shape = v.args.map((a) => (a.required ? `<${a.name}>` : `[${a.name}]`)).join(" ");
+    lines.push(`  ginga ${v.name}${shape === "" ? "" : ` ${shape}`}`);
+  }
+  lines.push("", "infra: events | lint | tick | serve | install | adopt | hooks | ready | doctor | version | vigia (watch sem alvo)");
+  return lines.join("\n");
+}
+
+/** Nome no registro: tenta verbo de duas palavras primeiro (`intent new`), depois um token. */
+function matchVerb(tokens: string[]): { verb: Verb; consumed: number } | null {
+  if (tokens.length === 0 || tokens[0]!.startsWith("-")) return null;
+  if (tokens.length >= 2 && !tokens[1]!.startsWith("-")) {
+    const two = getVerb(`${tokens[0]} ${tokens[1]}`);
+    if (two) return { verb: two, consumed: 2 };
+  }
+  const one = getVerb(tokens[0]!);
+  if (one) return { verb: one, consumed: 1 };
+  return null;
+}
+
+async function verbCommand(verb: Verb, tokens: string[]): Promise<number> {
+  const positionals: string[] = [];
+  const flags: Record<string, string> = {};
+  let json = false;
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i]!;
+    if (t === "--json") {
+      json = true;
+      continue;
+    }
+    if (t.startsWith("--")) {
+      const value = tokens[i + 1];
+      if (value === undefined || value === "" || value.startsWith("--")) {
+        console.error(`falta valor para ${t}`);
+        return 2;
+      }
+      flags[t.slice(2)] = value;
+      i++;
+      continue;
+    }
+    positionals.push(t);
+  }
+
+  // args do verbo: --<nome> vence; senão o próximo posicional (ordem de verb.args).
+  const args: VerbArgs = {};
+  let next = 0;
+  for (const a of verb.args) {
+    const flag = flags[a.name];
+    if (flag !== undefined) {
+      args[a.name] = flag;
+      continue;
+    }
+    const p = positionals[next++];
+    if (p !== undefined) args[a.name] = p;
+  }
+  if (next < positionals.length) {
+    console.error(`argumentos excedentes: ${positionals.slice(next).join(" ")}`);
+    return 2;
+  }
+
+  const root = nonEmpty(flags.root) ?? nonEmpty(process.env.GINGA_ROOT) ?? join(process.cwd(), ".ginga");
+  const by = nonEmpty(flags.by) ?? nonEmpty(process.env.GINGA_BY) ?? nonEmpty(process.env.USER) ?? "cli";
+  const via = nonEmpty(flags.via) ?? "cli";
+
+  let db: ReturnType<typeof openStateDb> | undefined;
+  try {
+    db = openStateDb(resolveStateDbPath(root)); // $GINGA_STATE_DB vence dentro de resolveStateDbPath
+    const result = await runVerb(verb.name, { by, via, root, db }, args);
+    console.log(json ? JSON.stringify(result) : JSON.stringify(result, null, 2));
+    return 0;
+  } catch (e) {
+    const msg = (e as Error).message;
+    console.error(msg);
+    return msg.startsWith("falta argumento:") || msg.startsWith("verbo desconhecido:") ? 2 : 1;
+  } finally {
+    db?.close();
+  }
+}
 
 function validateCommand(file: string): number {
   let raw: string;
@@ -53,6 +152,10 @@ function validateCommand(file: string): number {
 }
 
 export async function run(args: string[]): Promise<number> {
+  if (args[0] === "--help" || args[0] === "-h" || args[0] === "help") {
+    console.log(helpText());
+    return 0;
+  }
   if (args[0] === "--version") {
     console.log(`ginga ${VERSION.version}`);
     return 0;
@@ -257,7 +360,9 @@ export async function run(args: string[]): Promise<number> {
     return 2;
   }
 
-  if (args[0] === "watch") {
+  // `ginga watch <alvo>` é o verbo watch do registro; `ginga watch` sem alvo
+  // posicional (só flags) continua sendo o vigia.
+  if (args[0] === "watch" && (args[1] === undefined || args[1].startsWith("-"))) {
     return watchCmd(args.slice(1));
   }
 
@@ -317,6 +422,11 @@ export async function run(args: string[]): Promise<number> {
     });
     return 0;
   }
+
+  // Dispatch genérico do registro: qualquer verbo nomeado aqui é o verbo —
+  // a regra fica no registro, este bloco é igual para todos.
+  const matched = matchVerb(args);
+  if (matched) return await verbCommand(matched.verb, args.slice(matched.consumed));
 
   if (args.length === 0) {
     console.error("usage: ginga install / pinga install (--dry-run | --apply | --revert | --rebaseline) [--only H] [--manifest PATH] [--home PATH]");

@@ -3,14 +3,17 @@
 // MESMA função do `ginga tick` (runTick de src/tick.ts) — aqui só se decide
 // QUANDO rodá-la: por intervalo (`[serve].tick_seconds`) e por evento
 // (`fs.watch` em $GINGA_EVENTS, com debounce; um tick em curso coloca o
-// próximo na fila). Escuta só em 127.0.0.1 — não há autenticação até o
-// PLAN-0011, então um `--host` diferente sai com 2 sem subir.
+// próximo na fila). A API do registro (PLAN-0011) serve sobre o bundle
+// <root>/.ginga: sem auth configurada (GINGA_TOKEN, [serve].token_file ou
+// [serve].allow — TASK-04) o bind é forçado em 127.0.0.1 e `--host` diferente
+// sai com 2 citando auth; com auth, qualquer host vale e toda requisição
+// precisa de Bearer token ou IP na allowlist.
 //
 // O serve roda para sempre e precisa do event loop, então src/cli.ts usa este
 // arquivo como worker (sync fachada → `bun src/serve.ts serve …`).
 
 import { readFileSync, watch } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { runTick } from "./tick.ts";
 import { parseCommands } from "./tick.ts";
 import { Supervisor, parseSupervisorConfig } from "./supervisor.ts";
@@ -20,8 +23,9 @@ import { routeEvents } from "./notify/router.ts";
 import { send as portSend } from "./notify/port.ts";
 import { openStateDb, resolveStateDbPath } from "./state/db.ts";
 import { ingestEvents } from "./state/ingest.ts";
+import { startApi } from "./api/server.ts";
 
-/** Padrão até o PLAN-0011 (sem auth, só loopback). */
+/** Bind sem auth (TASK-04): só loopback; fora daqui, só com credencial. */
 const DEFAULT_HOST = "127.0.0.1";
 /** Porta padrão; a 4242 é do painel do pinga. */
 const DEFAULT_PORT = 4243;
@@ -35,10 +39,15 @@ const WATCHDOG_MS = 2_000;
 export type ServeConfig = {
   tick_seconds: number;
   port: number;
+  /** `[serve].token_file`: caminho do arquivo com o token da API (TASK-04). */
+  token_file?: string;
+  /** `[serve].allow = ["100.64.0.0/10", …]`: CIDRs IPv4 que entram sem token. */
+  allow?: string[];
 };
 
-/** `[serve].tick_seconds = N` / `[serve].port = N` do project.toml (números,
- *  com ou sem aspas). Outras seções/valores são ignorados. */
+/** `[serve].tick_seconds = N` / `[serve].port = N` (números, com ou sem
+ *  aspas), `[serve].token_file = "caminho"` e `[serve].allow = ["cidr", …]`
+ *  do project.toml. Outras seções/valores são ignorados. */
 export function parseServeConfig(raw: string): Partial<ServeConfig> {
   const cfg: Partial<ServeConfig> = {};
   let section = "";
@@ -50,10 +59,20 @@ export function parseServeConfig(raw: string): Partial<ServeConfig> {
     }
     const kv = section === "serve" ? line.match(/^\s*([A-Za-z0-9_-]+)\s*=\s*(.+?)\s*$/) : null;
     if (!kv) continue;
-    const num = Number(kv[2]!.replace(/^"(.*)"$/, "$1"));
-    if (!Number.isFinite(num)) continue;
-    if (kv[1] === "tick_seconds") cfg.tick_seconds = num;
-    else if (kv[1] === "port") cfg.port = num;
+    const key = kv[1]!;
+    const val = kv[2]!;
+    if (key === "tick_seconds" || key === "port") {
+      const num = Number(val.replace(/^"(.*)"$/, "$1"));
+      if (!Number.isFinite(num)) continue;
+      if (key === "tick_seconds") cfg.tick_seconds = num;
+      else cfg.port = num;
+    } else if (key === "token_file") {
+      const s = unquote(val);
+      if (s !== "") cfg.token_file = s;
+    } else if (key === "allow") {
+      const list = channelList(val);
+      if (list.length > 0) cfg.allow = list;
+    }
   }
   return cfg;
 }
@@ -70,7 +89,26 @@ function readServeConfig(root: string): ServeConfig {
     tick_seconds:
       c.tick_seconds !== undefined && c.tick_seconds >= 1 ? c.tick_seconds : DEFAULT_TICK_SECONDS,
     port: c.port !== undefined && c.port >= 0 ? Math.floor(c.port) : DEFAULT_PORT,
+    ...(c.token_file !== undefined ? { token_file: c.token_file } : {}),
+    ...(c.allow !== undefined ? { allow: c.allow } : {}),
   };
+}
+
+/** Token da API (TASK-04): `GINGA_TOKEN` vence `[serve].token_file` (que é
+ *  lido e aparado). Nada configurado ou arquivo ilegualável/vazio → sem
+ *  token; quem decide o que fazer é o chamador (gate de host / auth). */
+export function resolveToken(root: string, cfg: ServeConfig): string | undefined {
+  const fromEnv = (process.env.GINGA_TOKEN ?? "").trim();
+  if (fromEnv !== "") return fromEnv;
+  if (cfg.token_file === undefined) return undefined;
+  try {
+    const t = readFileSync(resolve(root, cfg.token_file), "utf8").trim();
+    if (t !== "") return t;
+    console.error(`serve: [serve].token_file vazio: ${cfg.token_file}`);
+  } catch (e) {
+    console.error(`serve: não consegui ler [serve].token_file ${cfg.token_file}: ${(e as Error).message}`);
+  }
+  return undefined;
 }
 
 /** Config de notificação (TASK-05): `[notify] mention`, `[notify.targets]`
@@ -223,18 +261,38 @@ export async function runServe(args: string[]): Promise<number> {
   }
   const base = rootArgs && rootArgs !== "" ? rootArgs : process.cwd();
 
-  if (host !== DEFAULT_HOST) {
-    console.error(`serve: --host ${host} não suportado (só ${DEFAULT_HOST} até o PLAN-0011)`);
+  const cfg = readServeConfig(base);
+  // PLAN-0011 TASK-04: auth = token (GINGA_TOKEN > [serve].token_file) ou
+  // allowlist de CIDRs. Sem auth o bind é forçado em 127.0.0.1 e `--host`
+  // diferente sai com 2 citando auth; com auth, `--host 0.0.0.0` sobe e a
+  // API exige a credencial em todo caminho.
+  const token = resolveToken(base, cfg);
+  const allow = cfg.allow ?? [];
+  const authOn = token !== undefined || allow.length > 0;
+
+  if (host !== DEFAULT_HOST && !authOn) {
+    console.error(
+      `serve: --host ${host} exige auth (GINGA_TOKEN, [serve].token_file ou [serve].allow); sem auth o bind é forçado em ${DEFAULT_HOST}`,
+    );
     return 2;
   }
+  if (!authOn) host = DEFAULT_HOST;
 
-  const cfg = readServeConfig(base);
-  const server = Bun.serve({
-    hostname: DEFAULT_HOST,
+  // PLAN-0011 TASK-03: o HTTP do serve É a API do registro — verbos agem sobre
+  // o bundle <root>/.ginga e `GET /` continua respondendo como antes (fallback).
+  const eventsPath = process.env.GINGA_EVENTS ?? "";
+  const api = startApi({
+    root: join(base, ".ginga"),
+    dbPath: resolveStateDbPath(base),
+    hostname: host,
     port: cfg.port,
-    fetch: () => new Response("ginga serve\n"),
+    eventsPath: eventsPath !== "" ? eventsPath : undefined,
+    fallback: () => new Response("ginga serve\n"),
+    ...(authOn
+      ? { auth: { ...(token !== undefined ? { token } : {}), ...(allow.length > 0 ? { allow } : {}) } }
+      : {}),
   });
-  console.log(`ginga serve: ${DEFAULT_HOST}:${server.port} (tick a cada ${cfg.tick_seconds}s)`);
+  console.log(`ginga serve: ${host}:${api.port} (tick a cada ${cfg.tick_seconds}s)`);
 
   const tickNow = makeTickRunner(base);
   void tickNow(); // catch-up inicial: o que ficou na fila antes de subir
@@ -242,7 +300,6 @@ export async function runServe(args: string[]): Promise<number> {
 
   // Por evento: appends em $GINGA_EVENTS (emitEvent faz O_APPEND linha a linha)
   // acordam o tick; o debounce agrupa uma rajada num tick só.
-  const eventsPath = process.env.GINGA_EVENTS ?? "";
   if (eventsPath !== "") {
     let debounce: ReturnType<typeof setTimeout> | null = null;
     try {
