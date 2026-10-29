@@ -1,10 +1,12 @@
 export * from "./rules.ts";
 export * from "./evaluate.ts";
 export * from "./ready.ts";
+export * from "./worktrees.ts";
 export { parseRulesToml } from "./rules.ts";
 export { evaluateWatch } from "./evaluate.ts";
 export { defaultRules } from "./rules.ts";
 export { sweepReady } from "./ready.ts";
+export { sweepWorktrees } from "./worktrees.ts";
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -14,6 +16,7 @@ import { openStateDb, resolveStateDbPath } from "../state/db.ts";
 import { parseRulesToml, defaultRules } from "./rules.ts";
 import { evaluateWatch } from "./evaluate.ts";
 import { sweepReady } from "./ready.ts";
+import { sweepWorktrees } from "./worktrees.ts";
 
 function readJsonl(path: string): any[] {
   const raw = readFileSync(path, "utf8");
@@ -75,6 +78,15 @@ export function watchCmd(args: string[]): number {
       for (const a of sweepReady(base)) {
         if (hasRule(a.rule_id)) alerts.push(a);
       }
+    } catch {}
+  }
+
+  // Sweep de worktrees (TASK-01/PLAN-0027): liga-se com a regra worktree_cleanup —
+  // por padrão nas regras embutidas, e só se rules.toml próprio listar o id.
+  // Idempotente: worktree limpa na varredura anterior já não é candidata.
+  if (hasRule("worktree_cleanup")) {
+    try {
+      alerts.push(...sweepWorktrees(base));
     } catch {}
   }
 
