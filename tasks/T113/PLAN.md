@@ -10,3 +10,4 @@ tests_frozen: [tests/watch_no_progress_window.test.ts]
 ---
 ## Contexto
 - Follow-up do judge 01:07 no PLAN-0023. Contrato em .ginga/plans/PLAN-0023-vigia-e-supervisor/TASK-22-no-progress-janela.md.
+- Implementação: em src/watch/evaluate.ts, por entidade, ref = ts do heartbeat mais novo; recorte = ts >= ref - window + último anterior ao corte (baseline); allSame/alive/span/thr+1 avaliados só no recorte.
