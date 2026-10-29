@@ -32,7 +32,7 @@ import {
   renderDiff,
   withShadow,
 } from "./shadow";
-import { ensureBinLink } from "./binlink";
+import { ensureBinLink, removeBinLink } from "./binlink";
 
 const ROOT = resolve(import.meta.dir, "..");
 
@@ -698,10 +698,9 @@ export async function installCmd(opts: InstallOptions): Promise<number> {
           rmSync(join(opts.home, ".config", "systemd", "user", "ginga-supervisor.service"), { force: true });
         } catch {}
         // Link do bin criado pelo apply: volta junto com a unidade (só
-        // symlink nosso; arquivo regular do usuário fica intacto).
+        // symlink nosso; link do usuário para outro alvo fica intacto).
         try {
-          const binLink = join(opts.home, ".local", "bin", "ginga");
-          if (isSymlinkAt(binLink)) rmSync(binLink, { force: true });
+          removeBinLink(opts.home);
         } catch {}
       }
       return rc;
@@ -1103,14 +1102,6 @@ export async function installCmd(opts: InstallOptions): Promise<number> {
       if (prevTmp === undefined) delete process.env.TMPDIR;
       else process.env.TMPDIR = prevTmp;
     }
-  }
-}
-
-function isSymlinkAt(abs: string): boolean {
-  try {
-    return lstatSync(abs).isSymbolicLink();
-  } catch {
-    return false;
   }
 }
 

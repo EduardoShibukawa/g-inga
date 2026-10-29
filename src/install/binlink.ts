@@ -40,3 +40,24 @@ export function ensureBinLink(
   const onPath = (envPath ?? "").split(":").includes(binDir);
   return { path: link, created, onPath };
 }
+
+/**
+ * Remove `~/.local/bin/ginga` SOMENTE se for symlink cujo alvo é o
+ * entrypoint do repo (o mesmo que `ensureBinLink` cria). Link do usuário
+ * para outro alvo, arquivo regular ou ausência ficam intactos.
+ * @returns true se removeu.
+ */
+export function removeBinLink(home: string): boolean {
+  const target = join(import.meta.dir, "..", "..", "bin", "ginga.ts");
+  const link = join(home, ".local", "bin", "ginga");
+  let st: ReturnType<typeof lstatSync> | undefined;
+  try {
+    st = lstatSync(link);
+  } catch {
+    return false;
+  }
+  if (!st.isSymbolicLink()) return false;
+  if (readlinkSync(link) !== target) return false;
+  unlinkSync(link);
+  return true;
+}
