@@ -5,6 +5,7 @@
 
 import type { Database } from "bun:sqlite";
 import * as read from "./read";
+import * as triageVerb from "./triage";
 import * as write from "./write";
 
 export type VerbCtx = { by: string; via: string; root: string; db: Database };
@@ -17,7 +18,7 @@ function arg(name: string, required = false): VerbArg {
 }
 
 export const VERBS: Verb[] = [
-  { name: "intent new", args: [arg("text", true)], write: true, run: write.intentNew },
+  { name: "intent new", args: [arg("text", true), arg("track"), arg("files"), arg("impact"), arg("contract")], write: true, run: write.intentNew },
   { name: "approve", args: [arg("id", true)], write: true, run: write.approve },
   { name: "reject", args: [arg("id", true), arg("reason")], write: true, run: write.reject },
   { name: "answer", args: [arg("blocker_id", true), arg("text", true)], write: true, run: write.answer },
@@ -28,6 +29,7 @@ export const VERBS: Verb[] = [
   { name: "escalate", args: [arg("plan", true), arg("task", true)], write: true, run: write.escalate },
   { name: "cancel", args: [arg("plan", true)], write: true, run: write.cancel },
   { name: "budget raise", args: [arg("plan", true), arg("usd", true)], write: true, run: write.budgetRaise },
+  { name: "triage promote", args: [arg("plan", true)], write: true, run: triageVerb.promote },
   { name: "status", args: [], write: false, run: read.status },
   { name: "board", args: [], write: false, run: read.board },
   { name: "inbox", args: [], write: false, run: read.inbox },

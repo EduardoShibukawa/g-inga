@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
 import { appendLog, emitAnswer, emitTransition } from "./audit";
+import { triage } from "../triage";
 import type { VerbArgs, VerbCtx } from "./registry";
 
 // ---------------------------------------------------------------------------
@@ -119,7 +120,7 @@ export function findArtifact(root: string, id: string): Artifact | null {
 // Verbos
 // ---------------------------------------------------------------------------
 
-function slugify(text: string): string {
+export function slugify(text: string): string {
   const slug = text
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -131,8 +132,42 @@ function slugify(text: string): string {
   return slug !== "" ? slug : "intent";
 }
 
+/** Inteiro estrito para `files`/`impact`; erro cita o nome do argumento. */
+function intArg(name: string, value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === "") return undefined;
+  const n = Number(value.trim());
+  if (!Number.isInteger(n)) throw new Error(`intent new: ${name} deve ser um número, veio ${JSON.stringify(value)}`);
+  return n;
+}
+
+/** Sem nº de arquivos nem impacto declarados: pergunta ao `manda context impact`, se houver. */
+function probeImpact(text: string): number | undefined {
+  if (!Bun.which("manda")) return undefined;
+  try {
+    const p = Bun.spawnSync(["manda", "context", "impact", text, "--json"], { stdout: "pipe", stderr: "ignore", timeout: 15000 });
+    if (p.exitCode !== 0) return undefined;
+    const parsed = JSON.parse(p.stdout.toString());
+    if (parsed?.unsupported || !Array.isArray(parsed?.items)) return undefined;
+    return parsed.items.length;
+  } catch {
+    return undefined;
+  }
+}
+
 export function intentNew(ctx: VerbCtx, args: VerbArgs): unknown {
   const text = args.text!;
+  const flag = args.track?.trim().toLowerCase() || undefined;
+  if (flag !== undefined && flag !== "small" && flag !== "feature") {
+    throw new Error(`intent new: track deve ser "small" ou "feature", veio ${JSON.stringify(args.track)}`);
+  }
+  const files = intArg("files", args.files);
+  let impact = intArg("impact", args.impact);
+  const newContract = (args.contract ?? "").trim().toLowerCase() === "true";
+  if (files === undefined && impact === undefined) impact = probeImpact(text);
+
+  // TASK-07/PLAN-0011: a triagem decide a trilha (determinística; na dúvida → feature).
+  const t = triage({ flag, files, impact, newContract });
+
   const intents = join(ctx.root, "intents");
   mkdirSync(intents, { recursive: true });
 
@@ -146,9 +181,9 @@ export function intentNew(ctx: VerbCtx, args: VerbArgs): unknown {
   const file = join(intents, `${id}-${slugify(text)}.md`);
   writeFileSync(
     file,
-    `---\ntype: intent\ntitle: ${title}\nsource: ${ctx.via}\ntimestamp: ${new Date().toISOString()}\n---\n${text.trim()}\n`,
+    `---\ntype: intent\ntitle: ${title}\nsource: ${ctx.via}\ntimestamp: ${new Date().toISOString()}\ntrack: ${t.track}\n---\n${text.trim()}\n`,
   );
-  return { id, file: file.slice(ctx.root.length + 1), title, source: ctx.via };
+  return { id, file: file.slice(ctx.root.length + 1), title, source: ctx.via, track: t.track, reasons: t.reasons };
 }
 
 /** approve/reject: gate de frontmatter do SPEC/PLAN + log + transition. */
