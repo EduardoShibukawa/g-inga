@@ -52,6 +52,10 @@ function validateCommand(file: string): number {
 }
 
 export async function run(args: string[]): Promise<number> {
+  if (args[0] === "--version") {
+    console.log(`ginga ${VERSION.version}`);
+    return 0;
+  }
   if (args[0] === "version" && args[1] === "--json") {
     console.log(JSON.stringify(VERSION));
     return 0;
