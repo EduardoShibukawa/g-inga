@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
 import { ADAPTER_ORDER, pickSource, pickPlugin } from "./install/index.ts";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { HOOKS_TOML, hooksDrift, type HooksDrift } from "./hooks/index.ts";
 
 type DoctorRecord = {
   harness: string;
@@ -71,7 +74,13 @@ export function doctorCmd(args: string[]): number {
     console.error((e as Error).message);
     return 2;
   }
-  const plugin = pickPlugin(env, cwd);
+  const plugin = (() => {
+    try {
+      return pickPlugin(env, cwd);
+    } catch {
+      return ""; // sem plugin nomeado; o nome só entra nos details do claude
+    }
+  })();
 
   const resolvedHome = home ?? env.HOME;
   if (!resolvedHome) {
@@ -216,6 +225,59 @@ export function doctorCmd(args: string[]): number {
       });
     }
   }
+
+  // hooks_drift (ginga): acusa drift dos hooks instalados pelo `ginga hooks install`
+  // na raiz do cwd (com hooks.toml). Sem hooks.toml: unverified/blocked, sem
+  // mexer no exit; com drift: broken/fail e o doctor sai 1, como o plugin quebrado.
+  const tHooks = Date.now();
+  let hooksRecord: DoctorRecord;
+  if (!existsSync(join(cwd, HOOKS_TOML))) {
+    hooksRecord = {
+      harness: "ginga",
+      check: "hooks_drift",
+      status: "unverified",
+      law2: "blocked",
+      cmd: null,
+      exit: null,
+      stdout_sha256: null,
+      duration_ms: Date.now() - tHooks,
+      detail: "hooks.toml ausente",
+    };
+  } else {
+    let drift: HooksDrift[];
+    try {
+      drift = hooksDrift(cwd);
+    } catch (e) {
+      drift = [{ repo: cwd, hook: "*", reason: (e as Error).message }];
+    }
+    if (drift.length === 0) {
+      hooksRecord = {
+        harness: "ginga",
+        check: "hooks_drift",
+        status: "ok",
+        law2: "pass",
+        cmd: null,
+        exit: null,
+        stdout_sha256: null,
+        duration_ms: Date.now() - tHooks,
+        detail: "sem drift",
+      };
+    } else {
+      broken = true;
+      hooksRecord = {
+        harness: "ginga",
+        check: "hooks_drift",
+        status: "broken",
+        law2: "fail",
+        cmd: null,
+        exit: null,
+        stdout_sha256: null,
+        duration_ms: Date.now() - tHooks,
+        detail: `${drift.length} drift(s): ${drift.map((d) => `${d.repo} ${d.hook} ${d.reason}`).join("; ")}`,
+      };
+    }
+  }
+  records.push(hooksRecord);
 
   if (json) {
     console.log(JSON.stringify(records));

@@ -179,19 +179,16 @@ export function hooksInstallCmd(args: string[]): number {
   return failed ? 1 : 0;
 }
 
-export function hooksCheckCmd(args: string[]): number {
-  const root = parseSubArgs(args, "check");
-  if (root._error !== undefined) return usageError(root._error);
-  let cfg: HooksConfig;
-  try {
-    cfg = loadHooksConfig(root._root);
-  } catch (e) {
-    console.error(`ginga hooks check: ${(e as Error).message}`);
-    return 1;
-  }
-  const drift: Array<{ repo: string; hook: string; reason: string }> = [];
+export type HooksDrift = { repo: string; hook: string; reason: string };
+
+// Detecção pura de drift entre a fonte .ginga/hooks/git/<hook> e o hook
+// instalado em cada repo do hooks.toml. Mesmos motivos do `hooks check`
+// (e mais "não é um arquivo" quando o caminho do hook não é um arquivo).
+export function hooksDrift(root: string): HooksDrift[] {
+  const cfg = loadHooksConfig(root);
+  const drift: HooksDrift[] = [];
   for (const repo of cfg.repos) {
-    const repoDir = join(root._root, repo);
+    const repoDir = join(root, repo);
     if (!existsSync(join(repoDir, ".git"))) {
       drift.push({ repo, hook: "*", reason: "não é um repo git" });
       continue;
@@ -204,7 +201,7 @@ export function hooksCheckCmd(args: string[]): number {
       continue;
     }
     for (const hook of cfg.hooks) {
-      const source = sourceHookPath(root._root, hook);
+      const source = sourceHookPath(root, hook);
       let golden: string;
       try {
         golden = readFileSync(source, "utf8");
@@ -217,11 +214,29 @@ export function hooksCheckCmd(args: string[]): number {
         drift.push({ repo, hook, reason: "hook ausente" });
         continue;
       }
+      if (!statSync(target).isFile()) {
+        drift.push({ repo, hook, reason: "não é um arquivo" });
+        continue;
+      }
       if (readFileSync(target, "utf8") !== golden) {
         drift.push({ repo, hook, reason: "diferente da fonte" });
       }
     }
   }
+  return drift;
+}
+
+export function hooksCheckCmd(args: string[]): number {
+  const root = parseSubArgs(args, "check");
+  if (root._error !== undefined) return usageError(root._error);
+  let cfg: HooksConfig;
+  try {
+    cfg = loadHooksConfig(root._root);
+  } catch (e) {
+    console.error(`ginga hooks check: ${(e as Error).message}`);
+    return 1;
+  }
+  const drift = hooksDrift(root._root);
   if (drift.length > 0) {
     console.log("drift detectado (ginga hooks check):");
     for (const d of drift) console.log(`  ${d.repo}  ${d.hook}: ${d.reason}`);
