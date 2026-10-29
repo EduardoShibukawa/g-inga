@@ -11,6 +11,7 @@ import { exportOkf } from "./lint/okf.ts";
 import { ingestCommand } from "./state/ingest.ts";
 import { existsSync } from "node:fs";
 import { installCmd } from "./install/index.ts";
+import { hooksCheckCmd, hooksInstallCmd } from "./hooks/index.ts";
 import { doctorCmd } from "./doctor.ts";
 import { adoptLocalEntries } from "./install/adopt.ts";
 import { defaultManifestPath } from "./install/manifest.ts";
@@ -209,6 +210,17 @@ export async function run(args: string[]): Promise<number> {
       env: process.env,
       cwd: process.cwd(),
     });
+  }
+
+  if (args[0] === "hooks") {
+    if (args[1] === "install") return hooksInstallCmd(args.slice(2));
+    if (args[1] === "check") return hooksCheckCmd(args.slice(2));
+    console.error(
+      args[1] === undefined
+        ? "uso: ginga hooks install|check [--root PATH]"
+        : `uso: ginga hooks install|check [--root PATH] (subcomando desconhecido: ${args[1]})`,
+    );
+    return 2;
   }
 
   if (args[0] === "doctor") {
