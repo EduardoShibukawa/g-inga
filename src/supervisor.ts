@@ -5,7 +5,7 @@
 
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
-import { mkdirSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 
 export type Lane = {
   repo: string;
@@ -61,17 +61,42 @@ function fillCmd(cmd: string, vars: Record<string, string>): string {
   return cmd.replace(/\{(\w+)\}/g, (m, key: string) => (key in vars ? vars[key]! : m));
 }
 
-async function hasPending(lane: Lane, opts: SupervisorOptions): Promise<boolean> {
-  if (opts.pendingCheck) {
+// TASK-26 / T117: lacuna do corte (d). Pendência padrão do supervisor, sem
+// pendingCheck injetado: backlog com linha `- [ ]`, arquivo ready/<repo>.json
+// direto em algum plano, ou fila (queueCommand) indicando pendência. Sem
+// queueCommand e sem as duas fontes de arquivo: não pendente (antes devolvia
+// true, o que religava lanes ociosas em laço quente).
+function backlogHasPending(root: string, repo: string): boolean {
+  try {
+    const text = readFileSync(join(root, ".ginga", "prompts", `backlog-${repo}.md`), "utf8");
+    return /^- \[ \]/m.test(text);
+  } catch {
+    return false; // sem arquivo de backlog: nada pendente por aqui
+  }
+}
+
+function hasReadyFile(root: string, repo: string): boolean {
+  // Só `<plan>/ready/<repo>.json` direto; `ready/done/<repo>.json` não vale.
+  const plansDir = join(root, ".ginga", "plans");
+  let entries: string[];
+  try {
+    entries = readdirSync(plansDir);
+  } catch {
+    return false;
+  }
+  for (const plan of entries) {
     try {
-      return Boolean(await opts.pendingCheck(lane.repo));
+      if (statSync(join(plansDir, plan, "ready", `${repo}.json`)).isFile()) return true;
     } catch {
-      return true;
+      // esse plano não tem o arquivo pronto
     }
   }
+  return false;
+}
+
+async function queueHasPending(lane: Lane, opts: SupervisorOptions, root: string): Promise<boolean> {
   const cmd = opts.queueCommand;
-  if (!cmd) return true;
-  const root = opts.root ?? process.cwd();
+  if (!cmd) return false;
   try {
     const filled = fillCmd(cmd, { root, repo: lane.repo });
     const r = Bun.spawnSync(["/bin/sh", "-c", filled], { stdout: "pipe", stderr: "pipe" });
@@ -85,8 +110,22 @@ async function hasPending(lane: Lane, opts: SupervisorOptions): Promise<boolean>
       return plan === lane.repo || plan.startsWith(lane.repo);
     });
   } catch {
-    return true;
+    return true; // fila configurada e falhou ⇒ pendente
   }
+}
+
+async function hasPending(lane: Lane, opts: SupervisorOptions): Promise<boolean> {
+  if (opts.pendingCheck) {
+    try {
+      return Boolean(await opts.pendingCheck(lane.repo));
+    } catch {
+      return true;
+    }
+  }
+  const root = opts.root ?? process.cwd();
+  if (backlogHasPending(root, lane.repo)) return true;
+  if (hasReadyFile(root, lane.repo)) return true;
+  return queueHasPending(lane, opts, root);
 }
 
 // TASK-23 / T114: cooldown de ociosidade entre rodadas. Dorme idleCooldownMs
