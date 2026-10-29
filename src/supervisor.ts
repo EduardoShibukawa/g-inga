@@ -441,5 +441,20 @@ export function parseSupervisorConfig(raw: string): {
   return { lanes, backoffBaseMs, backoffMaxMs, maxRestarts, idleCooldownMs, restartCooldownMs };
 }
 
+// TASK-07: alterna entre operador LLM e tick direto
+export function childArgv(cfg: { mode: "tick" | "operador"; repo: string }): string[] {
+  if (cfg.mode === "tick") {
+    return ["ginga", "tick", "--loop", "--repo", cfg.repo];
+  }
+  return ["manda", "lane", cfg.repo];
+}
+
 // Also export default
-export default { Supervisor, supervise, superviseLanes, runSupervisor, parseSupervisorConfig };
+export default {
+  Supervisor,
+  supervise,
+  superviseLanes,
+  runSupervisor,
+  parseSupervisorConfig,
+  childArgv,
+};
