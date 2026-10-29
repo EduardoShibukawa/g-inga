@@ -93,13 +93,23 @@ export function evaluateWatch(events: any[], rules?: any[]): Alert[] {
     const thr = Math.max(1, threshold(effectiveRules, "no_progress", 1));
     for (const [ent, hs] of byEntity) {
       hs.sort((a, b) => tsMs(a) - tsMs(b));
-      if (hs.length < thr + 1) continue;
-      const progresses = hs.map((h) => h?.data?.progress);
+      // TASK-22: recorte de janela — referência = heartbeat mais novo da entidade;
+      // mantém os heartbeats com ts >= ref - window e o último anterior ao corte
+      // (baseline). A regra vale sobre o recorte, não sobre o histórico inteiro.
+      let slice = hs;
+      if (win > 0) {
+        const ref = tsMs(hs[hs.length - 1]);
+        const cut = ref - win * 60 * 1000;
+        const firstIn = hs.findIndex((h) => tsMs(h) >= cut);
+        if (firstIn > 0) slice = hs.slice(firstIn - 1);
+      }
+      if (slice.length < thr + 1) continue;
+      const progresses = slice.map((h) => h?.data?.progress);
       const allSame = progresses.every((p) => p === progresses[0]);
-      const anyAlive = hs.some((h) => h?.data?.alive === true || h?.data?.alive === undefined);
+      const anyAlive = slice.some((h) => h?.data?.alive === true || h?.data?.alive === undefined);
       if (!allSame || !anyAlive) continue;
       if (win > 0) {
-        const span = tsMs(hs[hs.length - 1]) - tsMs(hs[0]);
+        const span = tsMs(slice[slice.length - 1]) - tsMs(slice[0]);
         if (span < win * 60 * 1000) continue;
       }
       const sevV = sev(effectiveRules, "no_progress", "high");

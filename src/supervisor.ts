@@ -141,6 +141,11 @@ export class Supervisor {
       const child = spawnFn(lane.command, { cwd: lane.cwd ?? root });
       runs++;
 
+      // PID do filho para o heartbeat (TASK-21 / T112): só um inteiro > 0 vale;
+      // sem pid conhecido (mock de teste sem `pid`) usa 0 (desconhecido), nunca process.pid.
+      const rawPid = (child as any).pid;
+      const childPid = typeof rawPid === "number" && Number.isInteger(rawPid) && rawPid > 0 ? rawPid : 0;
+
       // Heartbeat periódico enquanto o filho roda (TASK-20 / T111).
       // Chama progressCheck a cada heartbeatMs e emite heartbeat com alive:true.
       // Sem sobreposição (uma checagem por vez); erro do progressCheck não derruba
@@ -159,7 +164,7 @@ export class Supervisor {
               {
                 source: "ginga",
                 kind: "heartbeat",
-                data: { entity: `lane:${lane.repo}`, pid: process.pid, progress: p, alive: true },
+                data: { entity: `lane:${lane.repo}`, pid: childPid, progress: p, alive: true },
               },
               opts.emit,
             );
@@ -187,7 +192,7 @@ export class Supervisor {
 
       const progress = opts.progressCheck ? await opts.progressCheck(lane) : 0;
       if (exitCode === 0) {
-        await doEmit({ source: "ginga", kind: "heartbeat", data: { entity: `lane:${lane.repo}`, pid: process.pid, progress } }, opts.emit);
+        await doEmit({ source: "ginga", kind: "heartbeat", data: { entity: `lane:${lane.repo}`, pid: childPid, progress } }, opts.emit);
         await doEmit({ source: "ginga", kind: "lane.round", data: { lane: lane.repo, phase: "end" } }, opts.emit);
         backoff = base;
         restarts = 0;
