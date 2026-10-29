@@ -18,6 +18,7 @@ export type SupervisorOptions = {
   maxRestarts?: number;
   queueCommand?: string;
   pendingCheck?: (repo: string) => boolean | Promise<boolean>;
+  progressCheck?: (lane: Lane) => number | Promise<number>;
   sleep?: (ms: number) => Promise<void>;
   spawn?: (cmd: string, opts: { cwd?: string; env?: Record<string, string | undefined> }) => any;
   emit?: (ev: Record<string, unknown>) => void;
@@ -143,8 +144,9 @@ export class Supervisor {
         child.on("error", () => resolve(1));
       });
 
+      const progress = opts.progressCheck ? await opts.progressCheck(lane) : 0;
       if (exitCode === 0) {
-        await doEmit({ source: "ginga", kind: "heartbeat", data: { entity: `lane:${lane.repo}`, pid: process.pid, progress: runs } }, opts.emit);
+        await doEmit({ source: "ginga", kind: "heartbeat", data: { entity: `lane:${lane.repo}`, pid: process.pid, progress } }, opts.emit);
         await doEmit({ source: "ginga", kind: "lane.round", data: { lane: lane.repo, phase: "end" } }, opts.emit);
         backoff = base;
         restarts = 0;

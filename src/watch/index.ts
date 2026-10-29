@@ -62,7 +62,17 @@ export function watchCmd(args: string[]): number {
 
   const alerts = evaluateWatch(events, rules);
 
+  // Idempotencia entre ticks: nao reemitir alerta cujo dedupe_key ja foi
+  // emitido (evento kind=alert presente no conjunto de eventos lido).
+  const existingAlertKeys = new Set(
+    (Array.isArray(events) ? events : [])
+      .filter((e: any) => e && e.kind === "alert")
+      .map((e: any) => String(e?.data?.dedupe_key ?? ""))
+      .filter((k: string) => k !== ""),
+  );
+
   for (const a of alerts) {
+    if (existingAlertKeys.has(a.dedupe_key)) continue;
     try {
       emitEvent({ source: "ginga", kind: "alert", data: { rule_id: a.rule_id, severity: a.severity, entity: a.entity, summary: a.summary, dedupe_key: a.dedupe_key, actions: a.actions } });
     } catch {}
@@ -71,6 +81,7 @@ export function watchCmd(args: string[]): number {
   try {
     const db = openStateDb(resolveStateDbPath(base));
     for (const a of alerts) {
+      if (existingAlertKeys.has(a.dedupe_key)) continue;
       try {
         enqueue(db, { dedupe_key: a.dedupe_key, severity: a.severity, entity: a.entity, summary: a.summary, text: a.summary });
       } catch {}

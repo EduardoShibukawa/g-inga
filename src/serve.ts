@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { runTick } from "./tick.ts";
 import { parseCommands } from "./tick.ts";
 import { Supervisor, parseSupervisorConfig } from "./supervisor.ts";
+import { runWatch } from "./watch.ts";
 export * from "./supervisor.ts";
 import { routeEvents } from "./notify/router.ts";
 import { send as portSend } from "./notify/port.ts";
@@ -181,6 +182,14 @@ export function makeTickRunner(root: string): () => void {
       await runTick(["--root", root]);
     } catch (e) {
       console.error(`serve: tick falhou: ${(e as Error).message}`);
+    }
+    try {
+      const watchArgs = ["--root", root];
+      const ep = process.env.GINGA_EVENTS ?? "";
+      if (ep !== "") watchArgs.push("--events", ep);
+      runWatch(watchArgs);
+    } catch (e) {
+      console.error(`serve: watch falhou: ${(e as Error).message}`);
     }
     try {
       await routePending(root);
