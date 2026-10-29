@@ -105,7 +105,10 @@ def resolve_blocker(db_path, thread_id, via):
 
     plan_thread dá o PLAN pela (thread_id, target=via); events (kind='blocker')
     ordenados por ts trazem os blocker_ids; answers exclui os respondidos.
-    Sem db ou sem tabelas → None (nunca levanta).
+    O router (PLAN-0010) grava `target` como o target completo do envio
+    ("discord:chan-1"), então o match aceita o esquema: `target == via` ou
+    `target` começando com `via + ":"`. Sem db ou sem tabelas → None (nunca
+    levanta).
     """
     if not db_path or not thread_id or not os.path.exists(db_path):
         return None
@@ -115,11 +118,16 @@ def resolve_blocker(db_path, thread_id, via):
         tables = _tables_ok(conn)
         if not {"events", "plan_thread", "answers"} <= tables:
             return None
-        row = conn.execute(
-            "SELECT plan FROM plan_thread WHERE thread_id = ? AND target = ?",
-            (thread_id, via),
-        ).fetchone()
-        if not row or row[0] is None:
+        plan = None
+        for cand, target in conn.execute(
+            "SELECT plan, target FROM plan_thread WHERE thread_id = ? ORDER BY plan, target",
+            (thread_id,),
+        ).fetchall():
+            t = str(target or "")
+            if t == via or t.startswith(via + ":"):
+                plan = cand
+                break
+        if plan is None:
             return None
         answered = {
             r[0] for r in conn.execute("SELECT blocker_id FROM answers").fetchall()
@@ -127,7 +135,7 @@ def resolve_blocker(db_path, thread_id, via):
         for (raw,) in conn.execute(
             "SELECT json FROM events WHERE kind = 'blocker' AND plan = ? "
             "ORDER BY ts DESC, id DESC",
-            (row[0],),
+            (plan,),
         ).fetchall():
             try:
                 data = json.loads(raw).get("data") or {}
