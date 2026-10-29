@@ -11,6 +11,7 @@ import { exportOkf } from "./lint/okf.ts";
 import { ingestCommand } from "./state/ingest.ts";
 import { existsSync } from "node:fs";
 import { installCmd } from "./install/index.ts";
+import { installSupervisorCmd } from "./install/supervisor_unit.ts";
 import { hooksCheckCmd, hooksInstallCmd } from "./hooks/index.ts";
 import { readyWriteCmd } from "./ready.ts";
 import { watchCmd } from "./watch.ts";
@@ -172,11 +173,17 @@ export async function run(args: string[]): Promise<number> {
     let home: string | undefined;
     let manifestPath: string | undefined;
     let only: string | undefined;
+    let supervisor = false;
+    let enable = false;
     const rest = args.slice(1);
     for (let i = 0; i < rest.length; i++) {
       const arg = rest[i]!;
       if (arg === "--dry-run" || arg === "--apply" || arg === "--revert" || arg === "--rebaseline") {
         modes.add(arg);
+      } else if (arg === "--supervisor") {
+        supervisor = true;
+      } else if (arg === "--enable") {
+        enable = true;
       } else if (arg === "--home" || arg === "--manifest" || arg === "--only") {
         const value = rest[i + 1];
         if (value === undefined || value === "") {
@@ -191,6 +198,27 @@ export async function run(args: string[]): Promise<number> {
         console.error("uso: ginga install ...");
         return 2;
       }
+    }
+    if (enable && !supervisor) {
+      console.error("uso: ginga install --enable só é válido com --supervisor");
+      return 2;
+    }
+    if (supervisor) {
+      // Só a unit do supervisor + link do bin: não exige modo.
+      if (modes.size !== 0 || manifestPath !== undefined || only !== undefined) {
+        console.error("uso: ginga install --supervisor [--enable] [--home PATH]");
+        return 2;
+      }
+      const supervisorHome = home ?? process.env.HOME;
+      if (supervisorHome === undefined || !existsSync(supervisorHome)) {
+        console.error("uso: ginga install ...");
+        return 2;
+      }
+      return await installSupervisorCmd({
+        home: supervisorHome,
+        env: process.env,
+        enable,
+      });
     }
     if (modes.size !== 1) {
       console.error("uso: ginga install ...");
