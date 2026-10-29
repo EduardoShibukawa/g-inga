@@ -32,6 +32,7 @@ import {
   renderDiff,
   withShadow,
 } from "./shadow";
+import { ensureBinLink } from "./binlink";
 
 const ROOT = resolve(import.meta.dir, "..");
 
@@ -696,6 +697,12 @@ export async function installCmd(opts: InstallOptions): Promise<number> {
         try {
           rmSync(join(opts.home, ".config", "systemd", "user", "ginga-supervisor.service"), { force: true });
         } catch {}
+        // Link do bin criado pelo apply: volta junto com a unidade (só
+        // symlink nosso; arquivo regular do usuário fica intacto).
+        try {
+          const binLink = join(opts.home, ".local", "bin", "ginga");
+          if (isSymlinkAt(binLink)) rmSync(binLink, { force: true });
+        } catch {}
       }
       return rc;
     }
@@ -962,6 +969,8 @@ export async function installCmd(opts: InstallOptions): Promise<number> {
           mkdirSync(dirname(unitDst), { recursive: true });
           writeFileSync(unitDst, readFileSync(unitSrc));
         }
+        const link = ensureBinLink(opts.home, opts.env?.PATH);
+        if (!link.onPath) console.error("aviso: ~/.local/bin não está no PATH");
       } catch {}
       return INSTALL_EXIT.ok;
     }
@@ -998,6 +1007,8 @@ export async function installCmd(opts: InstallOptions): Promise<number> {
           mkdirSync(dirname(unitDst), { recursive: true });
           writeFileSync(unitDst, readFileSync(unitSrc));
         }
+        const link = ensureBinLink(opts.home, opts.env?.PATH);
+        if (!link.onPath) console.error("aviso: ~/.local/bin não está no PATH");
       } catch {}
     }
 
