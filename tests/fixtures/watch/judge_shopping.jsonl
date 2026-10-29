@@ -1,0 +1,2 @@
+{"v":1,"ts":"2026-10-28T19:00:00.000Z","source":"judge","kind":"receipt","id":"01JABCDEFGHJKMNPQRSTVWXYZ1","data":{"ledger_n":11,"hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":"pass","check":"judge"}}
+{"v":1,"ts":"2026-10-28T19:20:00.000Z","source":"judge","kind":"receipt","id":"01JABCDEFGHJKMNPQRSTVWXYZ2","data":{"ledger_n":12,"hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":"pass","check":"judge"}}
