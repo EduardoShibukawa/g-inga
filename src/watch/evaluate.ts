@@ -109,23 +109,34 @@ export function evaluateWatch(events: any[], rules?: any[]): Alert[] {
     }
   }
 
-  // lane_dead: lane.round start sem end correspondente.
+  // lane_dead: lane sem heartbeat (vivo) e com pendência (round start sem end).
   if (has("lane_dead")) {
     const rounds = evs.filter((e) => e?.kind === "lane.round");
     const starts = rounds.filter((e) => e?.data?.phase === "start");
     const ends = new Set(rounds.filter((e) => e?.data?.phase === "end").map((e) => e?.data?.lane));
+    const hearts = evs.filter((e) => e?.kind === "heartbeat");
     const thr = Math.max(1, threshold(effectiveRules, "lane_dead", 1));
-    let count = 0;
+    const laneHasAliveHeartbeat = (lane: string): boolean => {
+      const laneHearts = hearts.filter((h) => {
+        const ent = String(h?.data?.entity ?? "");
+        return ent === lane || ent === `lane/${lane}` || ent.endsWith(`/${lane}`) || ent.includes(lane);
+      });
+      if (laneHearts.length === 0) return false;
+      laneHearts.sort((a:any,b:any)=>tsMs(a)-tsMs(b));
+      const last = laneHearts[laneHearts.length-1];
+      // vivo apenas se o último heartbeat estiver alive (!== false)
+      return last?.data?.alive !== false;
+    };
+    const unendedLanes: string[] = [];
     for (const s of starts) {
       const lane = String(s?.data?.lane ?? "unknown");
       if (ends.has(lane)) continue;
-      count++;
+      unendedLanes.push(lane);
     }
-    if (count >= thr) {
-      // alert per unended lane
-      for (const s of starts) {
-        const lane = String(s?.data?.lane ?? "unknown");
-        if (ends.has(lane)) continue;
+    // pendência = existe round aberto
+    if (unendedLanes.length >= thr && unendedLanes.length > 0) {
+      for (const lane of new Set(unendedLanes)) {
+        if (laneHasAliveHeartbeat(lane)) continue;
         const sevV = sev(effectiveRules, "lane_dead", "high");
         const act = action(effectiveRules, "lane_dead");
         push("lane_dead", sevV, lane, "lane sem heartbeat/end na janela", act ?? "restart_lane");
@@ -151,8 +162,11 @@ export function evaluateWatch(events: any[], rules?: any[]): Alert[] {
     const shas = hearts.map(mainShaOf);
     const hasSha = shas.some((s) => s !== null);
     if (!hasSha) {
-      // Sem SHA de main disponível: não avalia (resultado unknown) e avisa.
-      if (hearts.length > 0) {
+      // Sem SHA de main disponível: não avalia (resultado unknown) e avisa,
+      // mas só quando há variação de progresso (evita ruído em no_progress).
+      const progresses = hearts.map((h:any) => h?.data?.progress);
+      const progressChanged = progresses.some((p:any) => p !== progresses[0]);
+      if (hearts.length > 0 && progressChanged) {
         const ent = String(hearts[0]?.data?.entity ?? "repo");
         push("main_moved_outside_gate", "warn", ent, "sem SHA de main no heartbeat", "alert");
       }
