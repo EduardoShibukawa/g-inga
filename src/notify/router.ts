@@ -9,7 +9,7 @@
 
 import type { Database } from "bun:sqlite";
 import { classify, DEFAULT_RULES } from "./rules.ts";
-import { drain as drainQueue, hasPending as queueHasPending } from "./queue.ts";
+import { drain as drainQueue, hasPending as queueHasPending, enqueue as enqueueQueue } from "./queue.ts";
 
 export type RouteSendInput = { target: string; text: string; thread?: string };
 export type RouteSendResult = { ok: boolean; thread_id?: string };
@@ -75,9 +75,29 @@ export async function routeEvents(
         discord: isDiscord,
         mention: isDiscord ? o.mention : undefined,
       });
-      const res = await o.send({ target, text, ...(thread ? { thread } : {}) });
-      if (res?.thread_id && ev.plan) saveThread(db, ev.plan, target, res.thread_id);
-      sent = true;
+      const itemPlan = typeof ev.plan === "string" ? ev.plan : undefined;
+      enqueueQueue(db, {
+        dedupe_key: `${row.id}:${channel}`,
+        severity: "info",
+        entity: typeof ev.plan === "string" ? ev.plan : undefined,
+        text,
+        target,
+        plan: itemPlan,
+        task: typeof ev.task === "string" ? ev.task : undefined,
+        ts: typeof ev.ts === "string" ? ev.ts : undefined,
+      });
+      const drainRes = await drainQueue(db, {
+        send: async (m: any) => {
+          const r = await o.send({ target: m.target, text: m.text, ...(thread ? { thread } : {}) });
+          if (r?.thread_id && itemPlan) saveThread(db, itemPlan, target, r.thread_id);
+          return r;
+        },
+        target,
+        targets: o.targets,
+        mention: o.mention,
+        rules: o.rules,
+      });
+      if ((drainRes?.delivered ?? drainRes?.sent ?? 0) > 0) sent = true;
     }
     markNotified(db, row.id);
     if (sent) routed++;
