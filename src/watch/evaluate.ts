@@ -161,37 +161,30 @@ export function evaluateWatch(events: any[], rules?: any[]): Alert[] {
     return null;
   };
 
-  // main_moved_outside_gate: SHA de refs/heads/main mudou entre ticks sem gate.result.
+  // main_moved_outside_gate: SHA de refs/heads/main mudou entre heartbeats da
+  // MESMA entidade/lane sem gate.result (TASK-19): heartbeats são agrupados por
+  // entidade e SHAs de entidades diferentes nunca são comparados entre si.
   if (has("main_moved_outside_gate")) {
     const hearts = evs.filter((e) => e?.kind === "heartbeat");
     const gates = evs.filter((e) => e?.kind === "gate.result");
-    let moved = false;
-    const shas = hearts.map(mainShaOf);
-    const hasSha = shas.some((s) => s !== null);
-    if (!hasSha) {
-      // Sem SHA de main disponível: não avalia (resultado unknown) e avisa por
-      // entidade-lane (dedupe rule:entity = 1 por lane), qualquer que seja o
-      // progress e mesmo com 1 heartbeat. Entidades executor/* não são lane e
-      // não carregam SHA: ignorar (preserva serve_watch_tick).
-      const entities = new Set<string>();
-      for (const h of hearts) {
-        const ent = String(h?.data?.entity ?? "repo");
-        if (ent.startsWith("executor/")) continue;
-        entities.add(ent);
-      }
-      for (const ent of entities) {
+    const shasByEntity = new Map<string, Set<string>>();
+    for (const h of hearts) {
+      const ent = String(h?.data?.entity ?? "repo");
+      if (!shasByEntity.has(ent)) shasByEntity.set(ent, new Set());
+      const s = mainShaOf(h);
+      if (s !== null) shasByEntity.get(ent)!.add(s);
+    }
+    const sevV = sev(effectiveRules, "main_moved_outside_gate", "critical");
+    const act = action(effectiveRules, "main_moved_outside_gate");
+    for (const [ent, shas] of shasByEntity) {
+      if (shas.size >= 2 && gates.length === 0) {
+        push("main_moved_outside_gate", sevV, ent, "mudança em main sem gate.result", act ?? "alert_critical");
+      } else if (shas.size === 0 && !ent.startsWith("executor/")) {
+        // Entidade sem nenhum SHA de main: resultado unknown → warn por entidade
+        // (dedupe rule:entity = 1 por entidade), mesmo que outras entidades
+        // tenham SHA. Entidades executor/* não são lane e não carregam SHA.
         push("main_moved_outside_gate", "warn", ent, "sem SHA de main no heartbeat", "alert");
       }
-      moved = false;
-    } else {
-      const distinct = new Set(shas.filter((s) => s !== null));
-      moved = distinct.size >= 2;
-    }
-    if (moved && gates.length === 0) {
-      const ent = String(hearts[0]?.data?.entity ?? "repo");
-      const sevV = sev(effectiveRules, "main_moved_outside_gate", "critical");
-      const act = action(effectiveRules, "main_moved_outside_gate");
-      push("main_moved_outside_gate", sevV, ent, "mudança em main sem gate.result", act ?? "alert_critical");
     }
   }
 
