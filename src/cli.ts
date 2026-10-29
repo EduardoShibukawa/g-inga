@@ -72,12 +72,19 @@ async function verbCommand(verb: Verb, tokens: string[]): Promise<number> {
       continue;
     }
     if (t.startsWith("--")) {
+      const name = t.slice(2);
       const value = tokens[i + 1];
-      if (value === undefined || value === "" || value.startsWith("--")) {
+      const hasValue = value !== undefined && value !== "" && !value.startsWith("--");
+      if (!hasValue) {
+        // Flag booleana declarada no registro (`--yes`): vale sem valor (T127).
+        if (verb.args.some((a) => a.bool && a.name === name)) {
+          flags[name] = "true";
+          continue;
+        }
         console.error(`falta valor para ${t}`);
         return 2;
       }
-      flags[t.slice(2)] = value;
+      flags[name] = value;
       i++;
       continue;
     }

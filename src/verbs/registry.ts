@@ -4,12 +4,14 @@
 // escrita em write.ts, leitura em read.ts, auditoria em audit.ts.
 
 import type { Database } from "bun:sqlite";
+import * as initVerb from "./init";
 import * as read from "./read";
 import * as triageVerb from "./triage";
 import * as write from "./write";
 
 export type VerbCtx = { by: string; via: string; root: string; db: Database };
-export type VerbArg = { name: string; required?: boolean };
+/** `bool` marca argumento flag (`--yes`): a CLI aceita sem valor (T127). */
+export type VerbArg = { name: string; required?: boolean; bool?: boolean };
 export type VerbArgs = Record<string, string | undefined>;
 export type Verb = { name: string; args: VerbArg[]; write: boolean; run(ctx: VerbCtx, args: VerbArgs): unknown | Promise<unknown> };
 
@@ -18,6 +20,7 @@ function arg(name: string, required = false): VerbArg {
 }
 
 export const VERBS: Verb[] = [
+  { name: "init", args: [{ name: "yes", bool: true }], write: true, run: initVerb.run },
   { name: "intent new", args: [arg("text", true), arg("track"), arg("files"), arg("impact"), arg("contract")], write: true, run: write.intentNew },
   { name: "approve", args: [arg("id", true)], write: true, run: write.approve },
   { name: "reject", args: [arg("id", true), arg("reason")], write: true, run: write.reject },
