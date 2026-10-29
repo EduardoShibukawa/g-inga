@@ -48,6 +48,23 @@ CREATE TABLE IF NOT EXISTS plan_thread (
   thread_id TEXT,
   PRIMARY KEY (plan, target)
 );
+
+CREATE TABLE IF NOT EXISTS notification_queue (
+  id TEXT PRIMARY KEY,
+  dedupe_key TEXT,
+  severity TEXT,
+  entity TEXT,
+  summary TEXT,
+  text TEXT,
+  target TEXT,
+  plan TEXT,
+  task TEXT,
+  ts TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  json TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS notification_queue_dedupe ON notification_queue(dedupe_key) WHERE dedupe_key IS NOT NULL AND dedupe_key <> '';
 `;
 
 /** Abre (criando se preciso) o state.db no caminho dado. */
