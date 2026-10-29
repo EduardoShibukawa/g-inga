@@ -12,6 +12,7 @@ import { ingestCommand } from "./state/ingest.ts";
 import { existsSync } from "node:fs";
 import { installCmd } from "./install/index.ts";
 import { hooksCheckCmd, hooksInstallCmd } from "./hooks/index.ts";
+import { readyWriteCmd } from "./ready.ts";
 import { watchCmd } from "./watch.ts";
 import { doctorCmd } from "./doctor.ts";
 import { adoptLocalEntries } from "./install/adopt.ts";
@@ -226,6 +227,16 @@ export async function run(args: string[]): Promise<number> {
 
   if (args[0] === "watch") {
     return watchCmd(args.slice(1));
+  }
+
+  if (args[0] === "ready") {
+    if (args[1] === "write") return readyWriteCmd(args.slice(2));
+    console.error(
+      args[1] === undefined
+        ? "uso: ginga ready write --root PATH --plan P --repo R --branch B [--worktree DIR]"
+        : `uso: ginga ready write --root PATH --plan P --repo R --branch B [--worktree DIR] (subcomando desconhecido: ${args[1]})`,
+    );
+    return 2;
   }
 
   if (args[0] === "doctor") {
