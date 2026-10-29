@@ -43,7 +43,19 @@ export async function routeEvents(
   let routed = 0;
   if (queueHasPending(db)) {
     try {
-      const drained = await drainQueue(db, { send: o.send, targets: o.targets, mention: o.mention, rules: o.rules });
+      const drained = await drainQueue(db, {
+        send: async (m: any) => {
+          const items = Array.isArray(m?.items) ? m.items : [];
+          const plans = [...new Set(items.map((it: any) => it?.plan).filter((pl: any) => typeof pl === "string" && pl !== ""))];
+          const inputThread = plans.length > 0 ? threadIfSaved(db, m.target, plans[0]) : undefined;
+          const r = await o.send({ target: m.target, text: m.text, ...(inputThread ? { thread: inputThread } : {}) });
+          if (r?.thread_id) {
+            for (const pl of plans) saveThread(db, pl, m.target, r.thread_id);
+          }
+          return r;
+        },
+        targets: o.targets, mention: o.mention, rules: o.rules,
+      });
       routed += drained.routed ?? drained.sent ?? 0;
     } catch {}
   }
@@ -88,8 +100,13 @@ export async function routeEvents(
       });
       const drainRes = await drainQueue(db, {
         send: async (m: any) => {
-          const r = await o.send({ target: m.target, text: m.text, ...(thread ? { thread } : {}) });
-          if (r?.thread_id && itemPlan) saveThread(db, itemPlan, target, r.thread_id);
+          const items = Array.isArray(m?.items) ? m.items : [];
+          const plans = [...new Set([itemPlan, ...items.map((it: any) => it?.plan)].filter((pl: any) => typeof pl === "string" && pl !== ""))];
+          const inputThread = thread ?? (plans.length > 0 ? threadIfSaved(db, target, plans[0]) : undefined);
+          const r = await o.send({ target: m.target, text: m.text, ...(inputThread ? { thread: inputThread } : {}) });
+          if (r?.thread_id) {
+            for (const pl of plans) saveThread(db, pl, target, r.thread_id);
+          }
           return r;
         },
         target,
