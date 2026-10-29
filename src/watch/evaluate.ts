@@ -150,12 +150,16 @@ export function evaluateWatch(events: any[], rules?: any[]): Alert[] {
     let moved = false;
     const shas = hearts.map(mainShaOf);
     const hasSha = shas.some((s) => s !== null);
-    if (hasSha) {
+    if (!hasSha) {
+      // Sem SHA de main disponível: não avalia (resultado unknown) e avisa.
+      if (hearts.length > 0) {
+        const ent = String(hearts[0]?.data?.entity ?? "repo");
+        push("main_moved_outside_gate", "warn", ent, "sem SHA de main no heartbeat", "alert");
+      }
+      moved = false;
+    } else {
       const distinct = new Set(shas.filter((s) => s !== null));
       moved = distinct.size >= 2;
-    } else {
-      const progresses = hearts.map((h) => h?.data?.progress);
-      moved = hearts.length >= 2 && !progresses.every((p) => p === progresses[0]);
     }
     if (moved && gates.length === 0) {
       const ent = String(hearts[0]?.data?.entity ?? "repo");
