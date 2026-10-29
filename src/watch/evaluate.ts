@@ -162,12 +162,17 @@ export function evaluateWatch(events: any[], rules?: any[]): Alert[] {
     const shas = hearts.map(mainShaOf);
     const hasSha = shas.some((s) => s !== null);
     if (!hasSha) {
-      // Sem SHA de main disponível: não avalia (resultado unknown) e avisa,
-      // mas só quando há variação de progresso (evita ruído em no_progress).
-      const progresses = hearts.map((h:any) => h?.data?.progress);
-      const progressChanged = progresses.some((p:any) => p !== progresses[0]);
-      if (hearts.length > 0 && progressChanged) {
-        const ent = String(hearts[0]?.data?.entity ?? "repo");
+      // Sem SHA de main disponível: não avalia (resultado unknown) e avisa por
+      // entidade-lane (dedupe rule:entity = 1 por lane), qualquer que seja o
+      // progress e mesmo com 1 heartbeat. Entidades executor/* não são lane e
+      // não carregam SHA: ignorar (preserva serve_watch_tick).
+      const entities = new Set<string>();
+      for (const h of hearts) {
+        const ent = String(h?.data?.entity ?? "repo");
+        if (ent.startsWith("executor/")) continue;
+        entities.add(ent);
+      }
+      for (const ent of entities) {
         push("main_moved_outside_gate", "warn", ent, "sem SHA de main no heartbeat", "alert");
       }
       moved = false;
@@ -231,7 +236,7 @@ export function evaluateWatch(events: any[], rules?: any[]): Alert[] {
       }
       if (open > 0) { hasPendingLane = true; break; }
     }
-    const allPass = gates.length > 0 && gates.every((g) => num(g?.data?.code) === 0);
+    const allPass = gates.length > 0 && gates.every((g) => typeof g?.data?.code === "number" && g.data.code === 0);
     const alvoOk = alvos.length > 0 && alvos.every((a) => a?.data?.ok === true);
     if (allPass && alvoOk && !hasPendingLane) {
       const sevV = sev(effectiveRules, "goal_reached", "info");
