@@ -1,0 +1,3 @@
+name: ginga
+version: "0.1.0"
+description: "Entrada do Hermes: resposta na thread e slash /ginga viram verbos do ginga (determinístico, sem LLM)"
