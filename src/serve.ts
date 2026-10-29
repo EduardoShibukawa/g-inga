@@ -3,8 +3,10 @@
 // MESMA função do `ginga tick` (runTick de src/tick.ts) — aqui só se decide
 // QUANDO rodá-la: por intervalo (`[serve].tick_seconds`) e por evento
 // (`fs.watch` em $GINGA_EVENTS, com debounce; um tick em curso coloca o
-// próximo na fila). Escuta só em 127.0.0.1 — não há autenticação até o
-// PLAN-0011, então um `--host` diferente sai com 2 sem subir.
+// próximo na fila). Escuta só em 127.0.0.1 e serve a API do registro
+// (PLAN-0011 TASK-03: /v1/verbs e /v1/events) sobre o bundle <root>/.ginga —
+// não há autenticação até a TASK-04, então um `--host` diferente sai com 2 sem
+// subir.
 //
 // O serve roda para sempre e precisa do event loop, então src/cli.ts usa este
 // arquivo como worker (sync fachada → `bun src/serve.ts serve …`).
@@ -20,6 +22,7 @@ import { routeEvents } from "./notify/router.ts";
 import { send as portSend } from "./notify/port.ts";
 import { openStateDb, resolveStateDbPath } from "./state/db.ts";
 import { ingestEvents } from "./state/ingest.ts";
+import { startApi } from "./api/server.ts";
 
 /** Padrão até o PLAN-0011 (sem auth, só loopback). */
 const DEFAULT_HOST = "127.0.0.1";
@@ -229,12 +232,19 @@ export async function runServe(args: string[]): Promise<number> {
   }
 
   const cfg = readServeConfig(base);
-  const server = Bun.serve({
+  // PLAN-0011 TASK-03: o HTTP do serve É a API do registro — verbos agem sobre
+  // o bundle <root>/.ginga e `GET /` continua respondendo como antes (fallback).
+  // Sem auth até a TASK-04; por isso só loopback.
+  const eventsPath = process.env.GINGA_EVENTS ?? "";
+  const api = startApi({
+    root: join(base, ".ginga"),
+    dbPath: resolveStateDbPath(base),
     hostname: DEFAULT_HOST,
     port: cfg.port,
-    fetch: () => new Response("ginga serve\n"),
+    eventsPath: eventsPath !== "" ? eventsPath : undefined,
+    fallback: () => new Response("ginga serve\n"),
   });
-  console.log(`ginga serve: ${DEFAULT_HOST}:${server.port} (tick a cada ${cfg.tick_seconds}s)`);
+  console.log(`ginga serve: ${DEFAULT_HOST}:${api.port} (tick a cada ${cfg.tick_seconds}s)`);
 
   const tickNow = makeTickRunner(base);
   void tickNow(); // catch-up inicial: o que ficou na fila antes de subir
@@ -242,7 +252,6 @@ export async function runServe(args: string[]): Promise<number> {
 
   // Por evento: appends em $GINGA_EVENTS (emitEvent faz O_APPEND linha a linha)
   // acordam o tick; o debounce agrupa uma rajada num tick só.
-  const eventsPath = process.env.GINGA_EVENTS ?? "";
   if (eventsPath !== "") {
     let debounce: ReturnType<typeof setTimeout> | null = null;
     try {
