@@ -1,6 +1,7 @@
 // ginga hooks — fontes versionadas em <root>/.ginga/hooks/git/<hook> + <root>/.ginga/hooks.toml.
-// Install: escreve o hook nos repos listados, encadeando (renomeando para <hook>.ginga-prev)
-// qualquer hook pré-existente, e respeitando core.hooksPath. Idempotente.
+// Install: escreve o hook nos repos listados; hook ginga-managed antigo é atualizado no lugar,
+// hook de terceiro é preservado (renomeado para <hook>.ginga-prev) e encadeado. Respeita
+// core.hooksPath. Idempotente.
 // Check: sai 0 quando todos os repos têm o hook igual à fonte; 1 no drift, listando repo e hook.
 import {
   chmodSync,
@@ -108,6 +109,13 @@ export function resolveHooksDir(repoDir: string): string {
 
 type InstallOutcome = "unchanged" | "installed" | "chained";
 
+const GINGA_MANAGED_MARKER = "# ginga-managed hook:";
+
+// Linha-marcadora no topo do hook: identifica hook nosso (versão antiga), não de terceiro.
+function hasGingaMarker(content: string): boolean {
+  return content.split(/\r?\n/).some((line) => line.startsWith(GINGA_MANAGED_MARKER));
+}
+
 function installHook(source: string, target: string): InstallOutcome {
   const golden = readFileSync(source, "utf8");
   if (existsSync(target) && statSync(target).isFile()) {
@@ -116,7 +124,14 @@ function installHook(source: string, target: string): InstallOutcome {
       chmodSync(target, 0o755); // idempotente: nada além do bit de execução
       return "unchanged";
     }
-    // hook pré-existente (hk, lefthook, script): preserva e encadeia depois do nosso
+    if (hasGingaMarker(current)) {
+      // nosso hook ginga-managed em versão antiga: atualiza no lugar, SEM renomear para
+      // .ginga-prev (um .ginga-prev de terceiro já existente fica intacto e encadeado pelo hook)
+      writeFileSync(target, golden);
+      chmodSync(target, 0o755);
+      return "installed";
+    }
+    // hook pré-existente de terceiro (hk, lefthook, script): preserva e encadeia depois do nosso
     const prev = target + PREV_SUFFIX;
     rmSync(prev, { force: true });
     renameSync(target, prev);

@@ -1,0 +1,62 @@
+#!/bin/sh
+# ginga-managed hook: reference-transaction
+# Recusa qualquer update de refs/heads/main sem MERGE_GATE=1 (merge, ff, reset, commit direto na main).
+# Mesmo com MERGE_GATE=1, recusa update de refs/heads/main quando algum ancestral do processo é
+# agente LLM (claude -p, codex exec, opencode run, pi) — mesma regra do .ginga/bin/merge-gate.sh.
+# Encadeia o hook pré-existente de mesmo nome (renomeado para <hook>.ginga-prev) depois do nosso guard.
+
+touches_main=0
+while read -r _old _new ref; do
+  case "$ref" in
+    refs/heads/main) touches_main=1 ;;
+  esac
+done
+
+if [ "$touches_main" = 1 ] && [ "$MERGE_GATE" != "1" ]; then
+  echo "BLOQUEADO (ginga reference-transaction): update de refs/heads/main sem MERGE_GATE=1" >&2
+  exit 1
+fi
+
+# b0:a1 do argv do pid $1: se b0 = timeout, pula as opções (-* ou números) e usa o comando
+# seguinte como b0 e o argumento seguinte como a1.
+pid_cmd() {
+  tr '\0' '\n' < "/proc/$1/cmdline" 2>/dev/null | awk '
+    NR == 1 { a0 = $0; next }
+    { argv[NR] = $0 }
+    END {
+      cmd = a0
+      sub(/.*\//, "", cmd)
+      i = 2
+      if (cmd == "timeout") {
+        while (i <= NR && (argv[i] ~ /^-/ || argv[i] ~ /^[0-9]+$/)) i++
+        cmd = argv[i]
+        sub(/.*\//, "", cmd)
+        i++
+      }
+      print cmd ":" (i <= NR ? argv[i] : "")
+    }'
+}
+
+is_llm_agent() {
+  case "$(pid_cmd "$1")" in
+    *opencode*:run | pi:* | claude:-p | codex:exec) return 0 ;;
+  esac
+  return 1
+}
+
+if [ "$touches_main" = 1 ]; then
+  pid=${PPID:-1}
+  while [ "${pid:-1}" -gt 1 ]; do
+    if is_llm_agent "$pid"; then
+      echo "BLOQUEADO (ginga reference-transaction): ancestral é agente LLM" >&2
+      exit 1
+    fi
+    ppid=$(sed -n 's/^PPid:[[:space:]]*//p' "/proc/$pid/status" 2>/dev/null)
+    case "$ppid" in '' | *[!0-9]*) break ;; esac
+    pid=$ppid
+  done
+fi
+
+prev="$(dirname "$0")/reference-transaction.ginga-prev"
+if [ -x "$prev" ]; then exec "$prev" "$@"; fi
+exit 0
