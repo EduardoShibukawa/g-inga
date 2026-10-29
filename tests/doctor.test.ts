@@ -7,7 +7,8 @@ import { dirname, join } from "node:path";
  * PLAN-0006 TASK-03: `ginga doctor [--json] [--only H] [--home P]` com a parte de harness do `pinga doctor`
  * (caixa preta, binário `claude` falso no PATH).
  * - Um registro por probe de cada adapter (pi, claude, opencode, hermes, tuios), com as 9 chaves do pinga
- *   (harness, check, status, law2, cmd, exit, stdout_sha256, duration_ms, detail) nessa ordem.
+ *   (harness, check, status, law2, cmd, exit, stdout_sha256, duration_ms, detail) nessa ordem. `--json`
+ *   embrulha em {schema_version, records} desde PLAN-0015 TASK-05; pinga/manda/gira têm registro `version`.
  * - Fonte e nome do plugin vêm de `GINGA_PLUGIN_SOURCE` + `[install].plugin` (TASK-02); sem fonte → exit 2.
  * - `--only H`: os outros viram `unverified` ("filtrado por --only"); H inválido → exit 2.
  * - claude/plugin_list: habilitado → ok; desabilitado ou ausente → degraded; exit ≠ 0 → broken e `ginga doctor` sai com 1.
@@ -65,7 +66,8 @@ function doctor(args: string[], o: { bin?: string; toml?: string | null; source?
   const out = r.stdout.toString();
   let records: any[] = [];
   try {
-    records = JSON.parse(out);
+    const parsed = JSON.parse(out);
+    records = Array.isArray(parsed) ? parsed : parsed?.records ?? [];
   } catch {}
   return { exit: r.exitCode, out, err: r.stderr.toString(), records };
 }
@@ -84,12 +86,14 @@ describe("ginga doctor", () => {
     expect(find(r.records, "claude", "plugin_validate").status).toBe("ok");
   });
 
-  test("--only: os outros harnesses viram unverified/filtrado e não há ledger, toolchain nem gira", () => {
+  test("--only: os outros harnesses viram unverified/filtrado e não há ledger nem toolchain", () => {
     const r = doctor(["--json", "--only", "claude"], { bin: fakeClaude("acme@acme-local\n  Status: enabled") });
     const others = r.records.filter((x) => ["pi", "opencode", "hermes", "tuios"].includes(x.harness));
     expect(others.length).toBeGreaterThanOrEqual(4);
     for (const x of others) expect(x).toMatchObject({ status: "unverified", detail: "filtrado por --only" });
-    expect(r.records.filter((x) => ["ledger", "toolchain", "gira"].includes(x.harness))).toEqual([]);
+    expect(r.records.filter((x) => ["ledger", "toolchain"].includes(x.harness))).toEqual([]);
+    // com --only a seleção é só de adapters: nem os probes de versão rodam (PLAN-0015 TASK-05)
+    expect(r.records.filter((x) => x.check === "version")).toEqual([]);
   });
 
   test("plugin desabilitado ou ausente: degraded, exit 0", () => {

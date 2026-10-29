@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { ADAPTER_ORDER, pickSource, pickPlugin } from "./install/index.ts";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { HOOKS_TOML, hooksDrift, type HooksDrift } from "./hooks/index.ts";
+import { binary } from "./workspace.ts";
 
 type DoctorRecord = {
   harness: string;
@@ -36,6 +37,100 @@ function filteredRecord(harness: string): DoctorRecord {
     duration_ms: null,
     detail: "filtrado por --only",
   };
+}
+
+// Versões (PLAN-0015 TASK-05): `ginga doctor` roda `--version --json` de cada
+// binário do homelab e confere a faixa semver declarada em `gingaCompat` no
+// package.json do ginga (só ">=X.Y.Z"; parser próprio, sem dependências).
+// pinga e manda são obrigatórios; gira é opcional — ausência e problema de
+// versão nele são aviso, nunca erro.
+const VERSION_BINS: Array<{ bin: string; required: boolean }> = [
+  { bin: "pinga", required: true },
+  { bin: "manda", required: true },
+  { bin: "gira", required: false },
+];
+
+function parseSemver(s: unknown): number[] | null {
+  if (typeof s !== "string") return null;
+  const m = /^\s*v?(\d+)\.(\d+)\.(\d+)/.exec(s);
+  if (!m) return null;
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
+function semverLt(a: number[], b: number[]): boolean {
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i]! < b[i]!;
+  return false;
+}
+
+function gingaCompat(): Record<string, unknown> {
+  try {
+    const pkg = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8"));
+    const c = pkg?.gingaCompat;
+    return c && typeof c === "object" ? (c as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function versionProbe(spec: { bin: string; required: boolean }, compat: Record<string, unknown>): DoctorRecord {
+  const t0 = Date.now();
+  const mk = (
+    status: DoctorRecord["status"],
+    law2: DoctorRecord["law2"],
+    cmd: string[] | null,
+    exit: number | null,
+    stdout: string | null,
+    detail: string,
+  ): DoctorRecord => ({
+    harness: spec.bin,
+    check: "version",
+    status,
+    law2,
+    cmd,
+    exit,
+    stdout_sha256: stdout === null ? null : sha256hex(stdout),
+    duration_ms: Date.now() - t0,
+    detail,
+  });
+
+  const bin = binary(spec.bin);
+  if (bin === null) return mk("unverified", "blocked", null, null, null, `${spec.bin} ausente do PATH`);
+
+  const cmd = [bin, "--version", "--json"];
+  const res = Bun.spawnSync(cmd, { timeout: 5000, stdout: "pipe", stderr: "pipe" });
+  const exit = res.exitCode ?? null;
+  const stdout = res.stdout?.toString() ?? "";
+  // Resposta inválida é aviso, não erro: obrigatório fica unverified/blocked
+  // (o pinga real não tem `--version`); opcional fica degraded/fail.
+  const invalid = (why: string) =>
+    spec.required ? mk("unverified", "blocked", cmd, exit, stdout, why) : mk("degraded", "fail", cmd, exit, stdout, why);
+
+  if ((res as any).exitedDueToTimeout === true || exit === null) {
+    return invalid(`timeout: ${spec.bin} sem resposta em --version --json`);
+  }
+  if (exit !== 0) return invalid(`${spec.bin}: --version --json saiu com exit ${exit}`);
+
+  let payload: any;
+  try {
+    payload = JSON.parse(stdout);
+  } catch {
+    return invalid(`${spec.bin}: saída de --version --json não é JSON`);
+  }
+  const ver = parseSemver(payload?.version);
+  if (!ver) return invalid(`${spec.bin}: resposta de --version --json sem "version" semver`);
+
+  const range = compat[spec.bin];
+  const m = typeof range === "string" ? /^\s*>=\s*(.+)$/.exec(range) : null;
+  const min = parseSemver(m?.[1]);
+  if (!min) {
+    return invalid(`gingaCompat.${spec.bin}: faixa ausente ou não reconhecida (esperado ">=X.Y.Z")`);
+  }
+  if (semverLt(ver, min)) {
+    return spec.required
+      ? mk("broken", "fail", cmd, exit, stdout, `${spec.bin} ${payload.version} fora da faixa ${range}`)
+      : mk("degraded", "fail", cmd, exit, stdout, `${spec.bin} ${payload.version} fora da faixa ${range} (opcional)`);
+  }
+  return mk("ok", "pass", cmd, exit, stdout, `${spec.bin} ${payload.version} na faixa ${range}`);
 }
 
 export function doctorCmd(args: string[]): number {
@@ -226,6 +321,18 @@ export function doctorCmd(args: string[]): number {
     }
   }
 
+  // versões: um registro `harness=<bin>, check="version"` por binário do
+  // homelab (pinga, manda obrigatórios; gira opcional). Com --only a seleção
+  // é só de adapters, então os probes não rodam e não registram nada.
+  if (only === undefined) {
+    const compat = gingaCompat();
+    for (const spec of VERSION_BINS) {
+      const rec = versionProbe(spec, compat);
+      if (rec.status === "broken") broken = true;
+      records.push(rec);
+    }
+  }
+
   // hooks_drift (ginga): acusa drift dos hooks instalados pelo `ginga hooks install`
   // na raiz do cwd (com hooks.toml). Sem hooks.toml: unverified/blocked, sem
   // mexer no exit; com drift: broken/fail e o doctor sai 1, como o plugin quebrado.
@@ -280,7 +387,7 @@ export function doctorCmd(args: string[]): number {
   records.push(hooksRecord);
 
   if (json) {
-    console.log(JSON.stringify(records));
+    console.log(JSON.stringify({ schema_version: 1, records }));
   } else {
     for (const r of records) {
       console.log(`${r.status} ${r.harness}/${r.check}: ${r.detail}`);

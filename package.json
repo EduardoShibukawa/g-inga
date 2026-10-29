@@ -8,5 +8,10 @@
   },
   "scripts": {
     "test": "bun test"
+  },
+  "gingaCompat": {
+    "pinga": ">=0.1.0",
+    "manda": ">=0.1.0",
+    "gira": ">=0.3.0"
   }
 }

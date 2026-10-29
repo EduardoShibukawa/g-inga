@@ -70,7 +70,8 @@ function doctor(opts: Parameters<typeof hooksBundle>[1]) {
   const r = Bun.spawnSync(["bun", BIN, "doctor", "--json", "--home", home], { cwd, env, stdout: "pipe", stderr: "pipe" });
   let records: any[] = [];
   try {
-    records = JSON.parse(r.stdout.toString());
+    const parsed = JSON.parse(r.stdout.toString());
+    records = Array.isArray(parsed) ? parsed : parsed?.records ?? [];
   } catch {}
   return { exit: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString(), records };
 }
