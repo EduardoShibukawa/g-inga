@@ -63,17 +63,18 @@ export function evaluateWatch(events: any[], rules?: any[]): Alert[] {
   const alerts: Alert[] = [];
   const seen = new Set<string>();
 
-  const push = (rule_id: string, severity: string, entity: string, summary: string, act?: string) => {
+  const push = (rule_id: string, severity: string, entity: string, summary: string, act?: string | string[]) => {
     const key = `${rule_id}:${entity}`;
     if (seen.has(key)) return;
     seen.add(key);
+    const acts = Array.isArray(act) ? act : (act ? [act] : []);
     alerts.push({
       rule_id,
       severity,
       entity,
       summary,
       dedupe_key: key,
-      actions: act ? [act] : [],
+      actions: acts,
     });
   };
 
@@ -102,8 +103,9 @@ export function evaluateWatch(events: any[], rules?: any[]): Alert[] {
         if (span < win * 60 * 1000) continue;
       }
       const sevV = sev(effectiveRules, "no_progress", "high");
-      const act = action(effectiveRules, "no_progress") ?? (effectiveRules ? undefined : "kill_and_retry");
-      push("no_progress", sevV, ent, "heartbeat sem progresso novo na janela", act ?? "kill_and_retry");
+      const act = action(effectiveRules, "no_progress") ?? "kill_and_retry";
+      const acts = act === "kill_and_retry" ? ["kill_and_retry", "rotate_model"] : [act, "rotate_model"];
+      push("no_progress", sevV, ent, "heartbeat sem progresso novo na janela", acts);
     }
   }
 
@@ -131,12 +133,30 @@ export function evaluateWatch(events: any[], rules?: any[]): Alert[] {
     }
   }
 
-  // main_moved_outside_gate: mudança em main (progress) sem gate.result.
+  const MAIN_SHA_KEYS = ["main_sha", "main_head", "head_sha", "git_sha", "ref_sha", "main_ref", "head", "sha", "main", "main_commit", "refs_heads_main"];
+  const mainShaOf = (h: any): string | null => {
+    const d = h?.data ?? {};
+    for (const k of MAIN_SHA_KEYS) {
+      const v = d[k];
+      if (typeof v === "string" && v !== "") return v;
+    }
+    return null;
+  };
+
+  // main_moved_outside_gate: SHA de refs/heads/main mudou entre ticks sem gate.result.
   if (has("main_moved_outside_gate")) {
     const hearts = evs.filter((e) => e?.kind === "heartbeat");
     const gates = evs.filter((e) => e?.kind === "gate.result");
-    const progresses = hearts.map((h) => h?.data?.progress);
-    const moved = hearts.length >= 2 && !progresses.every((p) => p === progresses[0]);
+    let moved = false;
+    const shas = hearts.map(mainShaOf);
+    const hasSha = shas.some((s) => s !== null);
+    if (hasSha) {
+      const distinct = new Set(shas.filter((s) => s !== null));
+      moved = distinct.size >= 2;
+    } else {
+      const progresses = hearts.map((h) => h?.data?.progress);
+      moved = hearts.length >= 2 && !progresses.every((p) => p === progresses[0]);
+    }
     if (moved && gates.length === 0) {
       const ent = String(hearts[0]?.data?.entity ?? "repo");
       const sevV = sev(effectiveRules, "main_moved_outside_gate", "critical");
@@ -179,8 +199,20 @@ export function evaluateWatch(events: any[], rules?: any[]): Alert[] {
     const alvos = evs.filter((e) => e?.kind === "alvo.check");
     const rounds = evs.filter((e) => e?.kind === "lane.round");
     const starts = rounds.filter((e) => e?.data?.phase === "start");
-    const ends = new Set(rounds.filter((e) => e?.data?.phase === "end").map((e) => e?.data?.lane));
-    const hasPendingLane = starts.some((s) => !ends.has(s?.data?.lane));
+    // Pareia start/end por ordem temporal: um end só fecha um start anterior.
+    const lanesSet = new Set(rounds.map((r: any) => String(r?.data?.lane ?? "unknown")));
+    let hasPendingLane = false;
+    for (const lane of lanesSet) {
+      const lr = rounds
+        .filter((r: any) => String(r?.data?.lane ?? "unknown") === lane)
+        .sort((a: any, b: any) => tsMs(a) - tsMs(b));
+      let open = 0;
+      for (const r of lr) {
+        if (r?.data?.phase === "start") open++;
+        else if (r?.data?.phase === "end") { if (open > 0) open--; }
+      }
+      if (open > 0) { hasPendingLane = true; break; }
+    }
     const allPass = gates.length > 0 && gates.every((g) => num(g?.data?.code) === 0);
     const alvoOk = alvos.length > 0 && alvos.every((a) => a?.data?.ok === true);
     if (allPass && alvoOk && !hasPendingLane) {
