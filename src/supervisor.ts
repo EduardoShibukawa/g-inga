@@ -20,6 +20,7 @@ export type SupervisorOptions = {
   pendingCheck?: (repo: string) => boolean | Promise<boolean>;
   progressCheck?: (lane: Lane) => number | Promise<number>;
   heartbeatMs?: number;
+  idleCooldownMs?: number;
   sleep?: (ms: number) => Promise<void>;
   spawn?: (cmd: string, opts: { cwd?: string; env?: Record<string, string | undefined> }) => any;
   emit?: (ev: Record<string, unknown>) => void;
@@ -84,6 +85,33 @@ async function hasPending(lane: Lane, opts: SupervisorOptions): Promise<boolean>
   }
 }
 
+// TASK-23 / T114: cooldown de ociosidade entre rodadas. Dorme idleCooldownMs
+// antes do próximo spawn, mas acorda cedo se a lane perder a pendência ou se o
+// supervisor for parado: o cooldown evita religar em laço quente, não atrasa o
+// encerramento.
+async function idleSleep(
+  ms: number,
+  lane: Lane,
+  opts: SupervisorOptions,
+  sleep: (ms: number) => Promise<void>,
+  stopFlag: { value: boolean },
+): Promise<void> {
+  let timer: ReturnType<typeof setInterval> | null = null;
+  const wake = new Promise<void>((resolve) => {
+    timer = setInterval(() => {
+      if (stopFlag.value) return resolve();
+      void hasPending(lane, opts).then((p) => {
+        if (!p) resolve();
+      });
+    }, 1000);
+  });
+  try {
+    await Promise.race([sleep(ms), wake]);
+  } finally {
+    if (timer) clearInterval(timer);
+  }
+}
+
 export class Supervisor {
   lanes: Lane[];
   opts: SupervisorOptions;
@@ -111,6 +139,7 @@ export class Supervisor {
     const base = opts.backoffBaseMs ?? 50;
     const maxMs = opts.backoffMaxMs ?? 1000;
     const maxRestarts = opts.maxRestarts ?? 3;
+    const idleMs = opts.idleCooldownMs ?? 600_000;
     const root = opts.root ?? process.cwd();
     const spawnFn =
       opts.spawn ??
@@ -137,6 +166,10 @@ export class Supervisor {
       }
 
       await doEmit({ source: "ginga", kind: "lane.round", data: { lane: lane.repo, phase: "start" } }, opts.emit);
+
+      // TASK-23 / T114: progresso lido antes do spawn, para comparar com o
+      // valor depois da saída (decisão de cooldown de ociosidade).
+      const progressBefore = opts.progressCheck ? await opts.progressCheck(lane) : null;
 
       const child = spawnFn(lane.command, { cwd: lane.cwd ?? root });
       runs++;
@@ -196,8 +229,16 @@ export class Supervisor {
         await doEmit({ source: "ginga", kind: "lane.round", data: { lane: lane.repo, phase: "end" } }, opts.emit);
         backoff = base;
         restarts = 0;
-        // small pause to avoid tight loop when always pending
-        await sleep(0);
+        // TASK-23 / T114: saída 0 sem progresso (sem progressCheck conta como
+        // sem progresso) espera idle_cooldown_ms antes de religar; com
+        // progresso, mantém a pausa curta de sempre.
+        const noProgress = progressBefore === null || progress <= progressBefore;
+        if (noProgress) {
+          await idleSleep(idleMs, lane, opts, sleep, this.stopFlag);
+        } else {
+          // small pause to avoid tight loop when always pending
+          await sleep(0);
+        }
         continue;
       }
 
@@ -234,11 +275,13 @@ export function parseSupervisorConfig(raw: string): {
   backoffBaseMs: number;
   backoffMaxMs: number;
   maxRestarts: number;
+  idleCooldownMs: number;
 } {
   const lanes: Lane[] = [];
   let backoffBaseMs = 50;
   let backoffMaxMs = 1000;
   let maxRestarts = 3;
+  let idleCooldownMs = 600_000;
   let section = "";
   let current: Partial<Lane> | null = null;
   const flush = () => {
@@ -262,6 +305,7 @@ export function parseSupervisorConfig(raw: string): {
       if (key === "backoff_base_ms" || key === "backoff_base") backoffBaseMs = Number(unq(val)) || backoffBaseMs;
       if (key === "backoff_max_ms" || key === "backoff_max") backoffMaxMs = Number(unq(val)) || backoffMaxMs;
       if (key === "max_restarts") maxRestarts = Number(unq(val)) || maxRestarts;
+      if (key === "idle_cooldown_ms") idleCooldownMs = Number(unq(val)) || idleCooldownMs;
       if (key === "lanes") {
         // array form
         if (val.startsWith("[")) {
@@ -297,7 +341,7 @@ export function parseSupervisorConfig(raw: string): {
     }
   }
   flush();
-  return { lanes, backoffBaseMs, backoffMaxMs, maxRestarts };
+  return { lanes, backoffBaseMs, backoffMaxMs, maxRestarts, idleCooldownMs };
 }
 
 // Also export default
