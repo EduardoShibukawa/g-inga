@@ -1,26 +1,31 @@
-// API HTTP do registro de verbos (PLAN-0011 TASK-03, T122): a superfície é
-// gerada de src/verbs/registry.ts — nenhuma regra por verbo aqui; a resposta
-// de um POST é exatamente o JSON do `run` (igual à CLI --json). Sem auth até
-// a TASK-04: escuta 127.0.0.1 por padrão.
+// API HTTP do registro de verbos (PLAN-0011 TASK-03, T122; auth na TASK-04,
+// T124): a superfície é gerada de src/verbs/registry.ts — nenhuma regra por
+// verbo aqui; a resposta de um POST é exatamente o JSON do `run` (igual à CLI
+// --json).
 //
 // - GET  /v1/verbs        → [{name, path, args, write}] de todo verbo do registro
 //   (`path` = nome com espaço → `-`; o conjunto de rotas É o do registro).
 // - POST /v1/verbs/:nome  → args de texto no corpo JSON; `via`/`by` vêm dos
-//   headers X-Ginga-Via/X-Ginga-By (padrão "web").
+//   headers X-Ginga-Via/X-Ginga-By (padrão "web"). Com `auth`, o `by` é o
+//   principal verificado (token ou ip:<ip>) e o X-Ginga-By é ignorado:
+//   identidade não se forja.
 // - GET  /v1/events       → SSE da tabela `events` (src/api/sse.ts).
 // Erros: verbo desconhecido 404; método errado 405; corpo que não é objeto
 // JSON ou argumento obrigatório ausente 400; falha do verbo 422.
+// Com `auth`, todo caminho (inclusive o fallback) sem credencial → 401 com
+// corpo exatamente "unauthorized", sem detalhe nem eco do token.
 
 import { openStateDb } from "../state/db.ts";
 import { VERBS, runVerb, type Verb, type VerbArgs, type VerbCtx } from "../verbs/registry.ts";
 import { sseResponse } from "./sse.ts";
+import { makeAuth, type AuthOpts } from "./auth.ts";
 
 export type ApiOpts = {
   /** Raiz do bundle sobre o qual os verbos agem. */
   root: string;
   /** Caminho do state.db (tabela `events` do SSE). */
   dbPath: string;
-  /** Padrão loopback: não há auth até o PLAN-0011 TASK-04. */
+  /** Padrão loopback; fora dele só com `auth` (é `ginga serve` quem gateia). */
   hostname?: string;
   /** 0 pede porta livre; é o que os testes e o serve usam como default. */
   port?: number;
@@ -30,6 +35,8 @@ export type ApiOpts = {
   eventsPath?: string;
   /** Resposta para caminhos fora da API (é assim que `ginga serve` divide o servidor). */
   fallback?: (req: Request) => Response | Promise<Response>;
+  /** Presente ⇒ toda requisição precisa de Bearer token ou IP na allowlist (TASK-04). */
+  auth?: AuthOpts;
 };
 
 const slug = (name: string): string => name.replace(/ /g, "-");
@@ -47,9 +54,11 @@ export function startApi(opts: ApiOpts): { port: number; hostname: string; stop(
   const hostname = opts.hostname ?? "127.0.0.1";
   const db = openStateDb(opts.dbPath);
   const timers = new Set<ReturnType<typeof setInterval>>();
+  const check = opts.auth ? makeAuth(opts.auth) : undefined;
 
-  /** POST de um verbo: valida corpo/args (400) e roda via runVerb (422 se falhar). */
-  async function execute(verb: Verb, req: Request): Promise<Response> {
+  /** POST de um verbo: valida corpo/args (400) e roda via runVerb (422 se falhar).
+   *  `principal` (auth ligada) é o `by` gravado nos verbos de escrita. */
+  async function execute(verb: Verb, req: Request, principal: string | undefined): Promise<Response> {
     let body: unknown;
     try {
       body = JSON.parse(await req.text());
@@ -75,7 +84,8 @@ export function startApi(opts: ApiOpts): { port: number; hostname: string; stop(
       }
     }
     const ctx: VerbCtx = {
-      by: req.headers.get("x-ginga-by") ?? "web",
+      // Com auth, o `by` É o principal verificado; X-Ginga-By não forja identidade.
+      by: principal ?? req.headers.get("x-ginga-by") ?? "web",
       via: req.headers.get("x-ginga-via") ?? "web",
       root: opts.root,
       db,
@@ -87,7 +97,16 @@ export function startApi(opts: ApiOpts): { port: number; hostname: string; stop(
     }
   }
 
-  async function route(req: Request): Promise<Response> {
+  async function route(req: Request, ip: string): Promise<Response> {
+    // Auth primeiro: TODO caminho (inclusive o fallback `/`) exige credencial.
+    // 401 com corpo exato "unauthorized" — sem detalhe, sem eco do token.
+    let principal: string | undefined;
+    if (check) {
+      const res = check(req, ip);
+      if (!res.ok) return new Response("unauthorized", { status: 401 });
+      principal = res.principal;
+    }
+
     const path = new URL(req.url).pathname;
 
     if (path === "/v1/verbs") {
@@ -102,7 +121,7 @@ export function startApi(opts: ApiOpts): { port: number; hostname: string; stop(
       const verb = verbBySlug(verbMatch[1]!);
       if (!verb) return fail(404, `verbo desconhecido: ${verbMatch[1]}`);
       if (req.method !== "POST") return fail(405, "use POST para rodar um verbo");
-      return execute(verb, req);
+      return execute(verb, req, principal);
     }
 
     if (path === "/v1/events") {
@@ -122,7 +141,16 @@ export function startApi(opts: ApiOpts): { port: number; hostname: string; stop(
     return fail(404, "não encontrado");
   }
 
-  const server = Bun.serve({ hostname, port: opts.port ?? 0, fetch: (req) => route(req) });
+  const server = Bun.serve({
+    hostname,
+    port: opts.port ?? 0,
+    // O IP do socket (loopback nos testes) é o que a allowlist da TASK-04 casa;
+    // `requestIP` deste Bun devolve IPv4 mapeado em "::ffff:a.b.c.d" → aparar.
+    fetch: (req, srv) => {
+      const addr = (srv as unknown as { requestIP?: (r: Request) => { address: string } | null }).requestIP?.(req)?.address;
+      return route(req, (addr ?? "127.0.0.1").replace(/^::ffff:/, ""));
+    },
+  });
 
   return {
     port: server.port,
