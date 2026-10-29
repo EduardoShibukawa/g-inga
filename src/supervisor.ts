@@ -19,6 +19,7 @@ export type SupervisorOptions = {
   queueCommand?: string;
   pendingCheck?: (repo: string) => boolean | Promise<boolean>;
   progressCheck?: (lane: Lane) => number | Promise<number>;
+  heartbeatMs?: number;
   sleep?: (ms: number) => Promise<void>;
   spawn?: (cmd: string, opts: { cwd?: string; env?: Record<string, string | undefined> }) => any;
   emit?: (ev: Record<string, unknown>) => void;
@@ -139,9 +140,49 @@ export class Supervisor {
 
       const child = spawnFn(lane.command, { cwd: lane.cwd ?? root });
       runs++;
+
+      // Heartbeat periódico enquanto o filho roda (TASK-20 / T111).
+      // Chama progressCheck a cada heartbeatMs e emite heartbeat com alive:true.
+      // Sem sobreposição (uma checagem por vez); erro do progressCheck não derruba
+      // a lane. O intervalo é limpo em qualquer caminho de saída do filho.
+      const heartbeatMs = opts.heartbeatMs ?? 30000;
+      let childDone = false;
+      let hbBusy = false;
+      const hbTimer = setInterval(() => {
+        if (childDone || hbBusy || !opts.progressCheck) return;
+        hbBusy = true;
+        Promise.resolve()
+          .then(() => opts.progressCheck!(lane))
+          .then((p) => {
+            if (childDone) return;
+            return doEmit(
+              {
+                source: "ginga",
+                kind: "heartbeat",
+                data: { entity: `lane:${lane.repo}`, pid: process.pid, progress: p, alive: true },
+              },
+              opts.emit,
+            );
+          })
+          .catch(() => {
+            // progressCheck falhou: mantém a lane viva, tenta de novo no próximo tick
+          })
+          .finally(() => {
+            hbBusy = false;
+          });
+      }, heartbeatMs);
+
       const exitCode: number = await new Promise((resolve) => {
-        child.on("exit", (code: number | null) => resolve(code ?? 1));
-        child.on("error", () => resolve(1));
+        child.on("exit", (code: number | null) => {
+          childDone = true;
+          clearInterval(hbTimer);
+          resolve(code ?? 1);
+        });
+        child.on("error", () => {
+          childDone = true;
+          clearInterval(hbTimer);
+          resolve(1);
+        });
       });
 
       const progress = opts.progressCheck ? await opts.progressCheck(lane) : 0;
