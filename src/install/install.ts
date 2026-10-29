@@ -9,6 +9,7 @@ import {
   rmSync,
   symlinkSync,
   unlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import { claudeAdapter } from "./adapters/claude";
@@ -942,6 +943,21 @@ export async function installCmd(opts: InstallOptions): Promise<number> {
       writeAtomic(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
       rmSync(planPath, { force: true });
       return INSTALL_EXIT.ok;
+    }
+
+    // PLAN-0023 follow-up 2: instala a unidade systemd do supervisor em
+    // ~/.config/systemd/user (HOME falso nos testes; sem systemd real).
+    if (opts.mode === "apply") {
+      try {
+        const unitSrc = join(import.meta.dir, "..", "..", "contrib", "systemd", "ginga-supervisor.service");
+        if (existsSync(unitSrc)) {
+          const unitDst = join(opts.home, ".config", "systemd", "user", "ginga-supervisor.service");
+          mkdirSync(dirname(unitDst), { recursive: true });
+          writeFileSync(unitDst, readFileSync(unitSrc));
+        }
+      } catch {
+        // best-effort: não derruba o install
+      }
     }
 
     // 4. --apply: nada real a escrever (idempotência, I16/manifest intocado).

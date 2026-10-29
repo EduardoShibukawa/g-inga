@@ -132,7 +132,7 @@ export class Supervisor {
       iterations++;
       const pending = await hasPending(lane, opts);
       if (!pending) {
-        await doEmit({ source: "ginga", kind: "lane.round", data: { lane: lane.repo, phase: "end" } }, opts.emit);
+        await doEmit({ source: "ginga", kind: "lane.round", data: { lane: lane.repo, phase: "end", reason: "no_pending" } }, opts.emit);
         stoppedReason = "no_pending";
         break;
       }
