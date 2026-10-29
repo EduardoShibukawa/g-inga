@@ -93,6 +93,14 @@ const KINDS: Record<string, DataSpec> = {
     strings: ["check"],
     booleans: ["ok"],
   },
+  alert: {
+    required: ["rule_id", "severity", "entity", "summary"],
+    strings: ["rule_id", "entity", "summary", "dedupe_key"],
+    enums: { severity: ["info", "warn", "high", "critical"] },
+    booleans: [],
+    numbers: [],
+  },
+
 };
 
 const REQUIRED = ["v", "ts", "source", "kind", "id"] as const;

@@ -12,6 +12,7 @@ import { ingestCommand } from "./state/ingest.ts";
 import { existsSync } from "node:fs";
 import { installCmd } from "./install/index.ts";
 import { hooksCheckCmd, hooksInstallCmd } from "./hooks/index.ts";
+import { watchCmd } from "./watch.ts";
 import { doctorCmd } from "./doctor.ts";
 import { adoptLocalEntries } from "./install/adopt.ts";
 import { defaultManifestPath } from "./install/manifest.ts";
@@ -221,6 +222,10 @@ export async function run(args: string[]): Promise<number> {
         : `uso: ginga hooks install|check [--root PATH] (subcomando desconhecido: ${args[1]})`,
     );
     return 2;
+  }
+
+  if (args[0] === "watch") {
+    return watchCmd(args.slice(1));
   }
 
   if (args[0] === "doctor") {
