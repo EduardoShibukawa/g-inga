@@ -4,6 +4,7 @@
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { deriveBoard } from "../board";
 import { fmGet } from "./write";
 import type { VerbArgs, VerbCtx } from "./registry";
 
@@ -59,40 +60,22 @@ export function status(ctx: VerbCtx): unknown {
   return { intents: group("intent"), specs: group("spec"), plans: group("plan") };
 }
 
-/** board: colunas por status (o quadro da Roda), PLANs e SPECs. */
+/** board: colunas por status (o quadro da Roda), usando modelo único. */
 export function board(ctx: VerbCtx): unknown {
-  const columns: Record<string, string[]> = {};
-  for (const a of listBundle(ctx.root)) {
-    if (a.kind === "intent") continue;
-    (columns[a.status] ??= []).push(a.id);
-  }
-  return { columns };
+  const b = deriveBoard(ctx.root, ctx.db);
+  return { columns: b.columns };
 }
 
 function tableExists(ctx: VerbCtx, name: string): boolean {
   return ctx.db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== null;
 }
 
-/** inbox: o que espera o dono — aprovação de SPEC/PLAN e blocker sem resposta. */
+/** inbox: o que espera o dono — usando modelo único. */
 export function inbox(ctx: VerbCtx): unknown {
-  const items: Array<Record<string, unknown>> = [];
-  for (const a of listBundle(ctx.root)) {
-    if (a.kind === "intent") continue;
-    if (a.status === "draft") items.push({ id: a.id, type: "aprovar", entity: a.kind, title: a.title, status: a.status });
-  }
-
-  const answered = new Set<string>();
-  if (tableExists(ctx, "answers")) {
-    for (const row of ctx.db.query('SELECT "blocker_id" FROM answers').all() as Array<Record<string, any>>) {
-      answered.add(String(row.blocker_id));
-    }
-  }
-  for (const row of ctx.db.query("SELECT id, ts, plan, task, json FROM events WHERE kind = 'blocker' ORDER BY ts").all() as Array<Record<string, any>>) {
-    const data = blockerData(row);
-    const blockerId = typeof data.blocker_id === "string" ? data.blocker_id : null;
-    if (!blockerId || answered.has(blockerId)) continue;
-    items.push({ id: blockerId, type: "blocker", question: data.question ?? null, raised_by: data.raised_by ?? null, plan: row.plan ?? null, task: row.task ?? null });
-  }
+  const b = deriveBoard(ctx.root, ctx.db);
+  const items = b.inbox as Array<Record<string, unknown>>;
+  // Para compatibilidade com testes antigos que esperam {items: [...]}
+  // mas o modelo novo tem shape específico; manter ambos formatos se necessário
   return { items };
 }
 
