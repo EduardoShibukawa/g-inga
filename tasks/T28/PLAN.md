@@ -5,7 +5,12 @@ done_when: "bun test tests/events_watch_kinds.test.ts"
 touch:
   - src/events/validate.ts
   - tests/events_watch_kinds.test.ts
-  - tests/fixtures/watch/
+  - tests/fixtures/watch/goal_reached.jsonl
+  - tests/fixtures/watch/judge_shopping.jsonl
+  - tests/fixtures/watch/lane_dead.jsonl
+  - tests/fixtures/watch/main_moved_outside_gate.jsonl
+  - tests/fixtures/watch/no_progress.jsonl
+  - tests/fixtures/watch/report_mismatch.jsonl
   - tasks/T28/PLAN.md
 tests_frozen: [tests/events_watch_kinds.test.ts]
 ---
