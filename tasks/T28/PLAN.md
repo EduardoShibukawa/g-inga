@@ -7,7 +7,7 @@ touch:
   - tests/events_watch_kinds.test.ts
   - tests/fixtures/watch/
   - tasks/T28/PLAN.md
-tests_frozen: [tests/events_watch_kinds.test.ts, tests/fixtures/watch/]
+tests_frozen: [tests/events_watch_kinds.test.ts]
 ---
 ## Contexto
 - TASK-01 do PLAN-0023 (vigia): sinais novos do SPEC-0003/PLAN-0023 sem tocar os kinds existentes.
