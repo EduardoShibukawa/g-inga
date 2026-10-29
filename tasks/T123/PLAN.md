@@ -4,6 +4,7 @@ goal: "A triagem escolhe a trilha por critérios determinísticos e só permite 
 done_when: "bun test tests/triage.test.ts tests/cli_verbs.test.ts"
 touch:
   - src/triage.ts
+  - src/verbs/triage.ts
   - src/verbs/registry.ts
   - src/verbs/write.ts
   - tests/triage.test.ts
