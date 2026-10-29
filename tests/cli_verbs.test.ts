@@ -66,6 +66,7 @@ const CASES: Record<string, { argv: string[]; args: Record<string, string> }> = 
   cancel: { argv: ["cancel", "PLAN-0001"], args: { plan: "PLAN-0001" } },
   "budget raise": { argv: ["budget", "raise", "PLAN-0001", "5"], args: { plan: "PLAN-0001", usd: "5" } },
   "triage promote": { argv: ["triage", "promote", "PLAN-0001"], args: { plan: "PLAN-0001" } },
+  init: { argv: ["init", "--yes"], args: { yes: "true" } },
   status: { argv: ["status"], args: {} },
   board: { argv: ["board"], args: {} },
   inbox: { argv: ["inbox"], args: {} },
