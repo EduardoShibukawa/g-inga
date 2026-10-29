@@ -112,8 +112,6 @@ export function evaluateWatch(events: any[], rules?: any[]): Alert[] {
   // lane_dead: lane sem heartbeat (vivo) e com pendência (round start sem end).
   if (has("lane_dead")) {
     const rounds = evs.filter((e) => e?.kind === "lane.round");
-    const starts = rounds.filter((e) => e?.data?.phase === "start");
-    const ends = new Set(rounds.filter((e) => e?.data?.phase === "end").map((e) => e?.data?.lane));
     const hearts = evs.filter((e) => e?.kind === "heartbeat");
     const thr = Math.max(1, threshold(effectiveRules, "lane_dead", 1));
     const laneHasAliveHeartbeat = (lane: string): boolean => {
@@ -127,15 +125,24 @@ export function evaluateWatch(events: any[], rules?: any[]): Alert[] {
       // vivo apenas se o último heartbeat estiver alive (!== false)
       return last?.data?.alive !== false;
     };
-    const unendedLanes: string[] = [];
-    for (const s of starts) {
-      const lane = String(s?.data?.lane ?? "unknown");
-      if (ends.has(lane)) continue;
-      unendedLanes.push(lane);
+    // Pareia start/end por lane e ordem temporal: um end fecha um start anterior
+    // da mesma lane (nunca mais de um); end sem start é ignorado.
+    const lanesSet = new Set(rounds.map((r: any) => String(r?.data?.lane ?? "unknown")));
+    const pendingLanes: string[] = [];
+    for (const lane of lanesSet) {
+      const lr = rounds
+        .filter((r: any) => String(r?.data?.lane ?? "unknown") === lane)
+        .sort((a: any, b: any) => tsMs(a) - tsMs(b));
+      let open = 0;
+      for (const r of lr) {
+        if (r?.data?.phase === "start") open++;
+        else if (r?.data?.phase === "end") { if (open > 0) open--; }
+      }
+      if (open > 0) pendingLanes.push(lane);
     }
-    // pendência = existe round aberto
-    if (unendedLanes.length >= thr && unendedLanes.length > 0) {
-      for (const lane of new Set(unendedLanes)) {
+    // pendência = lane com start aberto
+    if (pendingLanes.length >= thr && pendingLanes.length > 0) {
+      for (const lane of pendingLanes) {
         if (laneHasAliveHeartbeat(lane)) continue;
         const sevV = sev(effectiveRules, "lane_dead", "high");
         const act = action(effectiveRules, "lane_dead");
