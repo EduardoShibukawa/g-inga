@@ -23,6 +23,7 @@ export type SupervisorOptions = {
   progressCheck?: (lane: Lane) => number | Promise<number>;
   heartbeatMs?: number;
   idleCooldownMs?: number;
+  restartCooldownMs?: number;
   freeExhaustedFile?: string;
   sleep?: (ms: number) => Promise<void>;
   spawn?: (cmd: string, opts: { cwd?: string; env?: Record<string, string | undefined> }) => any;
@@ -139,10 +140,11 @@ export class Supervisor {
   private async runLane(lane: Lane): Promise<SupervisorResult> {
     const opts = this.opts;
     const sleep = opts.sleep ?? sleepDefault;
-    const base = opts.backoffBaseMs ?? 50;
-    const maxMs = opts.backoffMaxMs ?? 1000;
+    const base = opts.backoffBaseMs ?? 60_000;
+    const maxMs = opts.backoffMaxMs ?? 600_000;
     const maxRestarts = opts.maxRestarts ?? 3;
     const idleMs = opts.idleCooldownMs ?? 600_000;
+    const restartCooldownMs = opts.restartCooldownMs ?? 1_800_000;
     const root = opts.root ?? process.cwd();
     const spawnFn =
       opts.spawn ??
@@ -291,9 +293,15 @@ export class Supervisor {
 
       restarts++;
       await doEmit({ source: "ginga", kind: "lane.round", data: { lane: lane.repo, phase: "end", code: exitCode } }, opts.emit);
+      // TASK-25 / T116: lacuna do corte (c). Estourar max_restarts com pendência
+      // não mata a lane: espera restart_cooldown_ms (padrão 30 min), zera o
+      // contador e o backoff e volta ao topo, onde a pendência é reconferida.
+      // A lane só encerra por no_pending, stopped ou main_moved.
       if (restarts > maxRestarts) {
-        stoppedReason = "max_restarts";
-        break;
+        await sleep(restartCooldownMs);
+        restarts = 0;
+        backoff = base;
+        continue;
       }
       await sleep(backoff);
       backoff = Math.min(backoff * 2, maxMs);
@@ -323,12 +331,14 @@ export function parseSupervisorConfig(raw: string): {
   backoffMaxMs: number;
   maxRestarts: number;
   idleCooldownMs: number;
+  restartCooldownMs: number;
 } {
   const lanes: Lane[] = [];
-  let backoffBaseMs = 50;
-  let backoffMaxMs = 1000;
+  let backoffBaseMs = 60_000;
+  let backoffMaxMs = 600_000;
   let maxRestarts = 3;
   let idleCooldownMs = 600_000;
+  let restartCooldownMs = 1_800_000;
   let section = "";
   let current: Partial<Lane> | null = null;
   const flush = () => {
@@ -353,6 +363,7 @@ export function parseSupervisorConfig(raw: string): {
       if (key === "backoff_max_ms" || key === "backoff_max") backoffMaxMs = Number(unq(val)) || backoffMaxMs;
       if (key === "max_restarts") maxRestarts = Number(unq(val)) || maxRestarts;
       if (key === "idle_cooldown_ms") idleCooldownMs = Number(unq(val)) || idleCooldownMs;
+      if (key === "restart_cooldown_ms") restartCooldownMs = Number(unq(val)) || restartCooldownMs;
       if (key === "lanes") {
         // array form
         if (val.startsWith("[")) {
@@ -388,7 +399,7 @@ export function parseSupervisorConfig(raw: string): {
     }
   }
   flush();
-  return { lanes, backoffBaseMs, backoffMaxMs, maxRestarts, idleCooldownMs };
+  return { lanes, backoffBaseMs, backoffMaxMs, maxRestarts, idleCooldownMs, restartCooldownMs };
 }
 
 // Also export default

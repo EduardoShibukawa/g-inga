@@ -284,6 +284,7 @@ export async function runServe(args: string[]): Promise<number> {
       backoffMaxMs: supCfg.backoffMaxMs,
       maxRestarts: supCfg.maxRestarts,
       idleCooldownMs: supCfg.idleCooldownMs,
+      restartCooldownMs: supCfg.restartCooldownMs,
       queueCommand: (cmds as any).queue,
     });
     void sup.run();
