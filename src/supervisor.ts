@@ -4,6 +4,8 @@
 // Emite heartbeat / lane.round em $GINGA_EVENTS quando definido.
 
 import { spawn } from "node:child_process";
+import { dirname, join } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 
 export type Lane = {
   repo: string;
@@ -20,6 +22,9 @@ export type SupervisorOptions = {
   pendingCheck?: (repo: string) => boolean | Promise<boolean>;
   progressCheck?: (lane: Lane) => number | Promise<number>;
   heartbeatMs?: number;
+  idleCooldownMs?: number;
+  restartCooldownMs?: number;
+  freeExhaustedFile?: string;
   sleep?: (ms: number) => Promise<void>;
   spawn?: (cmd: string, opts: { cwd?: string; env?: Record<string, string | undefined> }) => any;
   emit?: (ev: Record<string, unknown>) => void;
@@ -56,17 +61,42 @@ function fillCmd(cmd: string, vars: Record<string, string>): string {
   return cmd.replace(/\{(\w+)\}/g, (m, key: string) => (key in vars ? vars[key]! : m));
 }
 
-async function hasPending(lane: Lane, opts: SupervisorOptions): Promise<boolean> {
-  if (opts.pendingCheck) {
+// TASK-26 / T117: lacuna do corte (d). Pendência padrão do supervisor, sem
+// pendingCheck injetado: backlog com linha `- [ ]`, arquivo ready/<repo>.json
+// direto em algum plano, ou fila (queueCommand) indicando pendência. Sem
+// queueCommand e sem as duas fontes de arquivo: não pendente (antes devolvia
+// true, o que religava lanes ociosas em laço quente).
+function backlogHasPending(root: string, repo: string): boolean {
+  try {
+    const text = readFileSync(join(root, ".ginga", "prompts", `backlog-${repo}.md`), "utf8");
+    return /^- \[ \]/m.test(text);
+  } catch {
+    return false; // sem arquivo de backlog: nada pendente por aqui
+  }
+}
+
+function hasReadyFile(root: string, repo: string): boolean {
+  // Só `<plan>/ready/<repo>.json` direto; `ready/done/<repo>.json` não vale.
+  const plansDir = join(root, ".ginga", "plans");
+  let entries: string[];
+  try {
+    entries = readdirSync(plansDir);
+  } catch {
+    return false;
+  }
+  for (const plan of entries) {
     try {
-      return Boolean(await opts.pendingCheck(lane.repo));
+      if (statSync(join(plansDir, plan, "ready", `${repo}.json`)).isFile()) return true;
     } catch {
-      return true;
+      // esse plano não tem o arquivo pronto
     }
   }
+  return false;
+}
+
+async function queueHasPending(lane: Lane, opts: SupervisorOptions, root: string): Promise<boolean> {
   const cmd = opts.queueCommand;
-  if (!cmd) return true;
-  const root = opts.root ?? process.cwd();
+  if (!cmd) return false;
   try {
     const filled = fillCmd(cmd, { root, repo: lane.repo });
     const r = Bun.spawnSync(["/bin/sh", "-c", filled], { stdout: "pipe", stderr: "pipe" });
@@ -80,7 +110,48 @@ async function hasPending(lane: Lane, opts: SupervisorOptions): Promise<boolean>
       return plan === lane.repo || plan.startsWith(lane.repo);
     });
   } catch {
-    return true;
+    return true; // fila configurada e falhou ⇒ pendente
+  }
+}
+
+async function hasPending(lane: Lane, opts: SupervisorOptions): Promise<boolean> {
+  if (opts.pendingCheck) {
+    try {
+      return Boolean(await opts.pendingCheck(lane.repo));
+    } catch {
+      return true;
+    }
+  }
+  const root = opts.root ?? process.cwd();
+  if (backlogHasPending(root, lane.repo)) return true;
+  if (hasReadyFile(root, lane.repo)) return true;
+  return queueHasPending(lane, opts, root);
+}
+
+// TASK-23 / T114: cooldown de ociosidade entre rodadas. Dorme idleCooldownMs
+// antes do próximo spawn, mas acorda cedo se a lane perder a pendência ou se o
+// supervisor for parado: o cooldown evita religar em laço quente, não atrasa o
+// encerramento.
+async function idleSleep(
+  ms: number,
+  lane: Lane,
+  opts: SupervisorOptions,
+  sleep: (ms: number) => Promise<void>,
+  stopFlag: { value: boolean },
+): Promise<void> {
+  let timer: ReturnType<typeof setInterval> | null = null;
+  const wake = new Promise<void>((resolve) => {
+    timer = setInterval(() => {
+      if (stopFlag.value) return resolve();
+      void hasPending(lane, opts).then((p) => {
+        if (!p) resolve();
+      });
+    }, 1000);
+  });
+  try {
+    await Promise.race([sleep(ms), wake]);
+  } finally {
+    if (timer) clearInterval(timer);
   }
 }
 
@@ -108,9 +179,11 @@ export class Supervisor {
   private async runLane(lane: Lane): Promise<SupervisorResult> {
     const opts = this.opts;
     const sleep = opts.sleep ?? sleepDefault;
-    const base = opts.backoffBaseMs ?? 50;
-    const maxMs = opts.backoffMaxMs ?? 1000;
+    const base = opts.backoffBaseMs ?? 60_000;
+    const maxMs = opts.backoffMaxMs ?? 600_000;
     const maxRestarts = opts.maxRestarts ?? 3;
+    const idleMs = opts.idleCooldownMs ?? 600_000;
+    const restartCooldownMs = opts.restartCooldownMs ?? 1_800_000;
     const root = opts.root ?? process.cwd();
     const spawnFn =
       opts.spawn ??
@@ -137,6 +210,10 @@ export class Supervisor {
       }
 
       await doEmit({ source: "ginga", kind: "lane.round", data: { lane: lane.repo, phase: "start" } }, opts.emit);
+
+      // TASK-23 / T114: progresso lido antes do spawn, para comparar com o
+      // valor depois da saída (decisão de cooldown de ociosidade).
+      const progressBefore = opts.progressCheck ? await opts.progressCheck(lane) : null;
 
       const child = spawnFn(lane.command, { cwd: lane.cwd ?? root });
       runs++;
@@ -190,22 +267,80 @@ export class Supervisor {
         });
       });
 
+      // TASK-24 / T115: códigos especiais de saída — não são falha comum.
+      // exit 20 (main movida fora do gate, como no lane.sh): para a lane em
+      // definitivo com alerta crítico e não consome restarts.
+      if (exitCode === 20) {
+        await doEmit({ source: "ginga", kind: "lane.round", data: { lane: lane.repo, phase: "end", code: exitCode } }, opts.emit);
+        await doEmit(
+          {
+            source: "ginga",
+            kind: "alert",
+            data: {
+              rule_id: "main_moved_outside_gate",
+              severity: "critical",
+              entity: `lane:${lane.repo}`,
+              summary: `lane ${lane.repo} parada: main movida fora do gate (exit 20)`,
+            },
+          },
+          opts.emit,
+        );
+        stoppedReason = "main_moved";
+        break;
+      }
+
+      // exit 4 (cota free esgotada): pausa até fechar a janela de 60 min desde
+      // o arquivo de esgotamento, sem consumir restarts e sem novo spawn na
+      // janela; ao voltar ao topo do laço a pendência é reconferida.
+      if (exitCode === 4) {
+        await doEmit({ source: "ginga", kind: "lane.round", data: { lane: lane.repo, phase: "end", code: exitCode } }, opts.emit);
+        const FREE_WINDOW_MS = 3_600_000;
+        const pauseFile = opts.freeExhaustedFile ?? join(root, ".ginga", "handoffs", ".free-esgotado");
+        let ageMs = 0;
+        try {
+          ageMs = Date.now() - statSync(pauseFile).mtimeMs;
+        } catch {
+          try {
+            mkdirSync(dirname(pauseFile), { recursive: true });
+            writeFileSync(pauseFile, "");
+          } catch {
+            // arquivo não pôde ser criado: ainda assim vale a pausa completa
+          }
+        }
+        await sleep(Math.max(0, FREE_WINDOW_MS - ageMs));
+        continue;
+      }
+
       const progress = opts.progressCheck ? await opts.progressCheck(lane) : 0;
       if (exitCode === 0) {
         await doEmit({ source: "ginga", kind: "heartbeat", data: { entity: `lane:${lane.repo}`, pid: childPid, progress } }, opts.emit);
         await doEmit({ source: "ginga", kind: "lane.round", data: { lane: lane.repo, phase: "end" } }, opts.emit);
         backoff = base;
         restarts = 0;
-        // small pause to avoid tight loop when always pending
-        await sleep(0);
+        // TASK-23 / T114: saída 0 sem progresso (sem progressCheck conta como
+        // sem progresso) espera idle_cooldown_ms antes de religar; com
+        // progresso, mantém a pausa curta de sempre.
+        const noProgress = progressBefore === null || progress <= progressBefore;
+        if (noProgress) {
+          await idleSleep(idleMs, lane, opts, sleep, this.stopFlag);
+        } else {
+          // small pause to avoid tight loop when always pending
+          await sleep(0);
+        }
         continue;
       }
 
       restarts++;
       await doEmit({ source: "ginga", kind: "lane.round", data: { lane: lane.repo, phase: "end", code: exitCode } }, opts.emit);
+      // TASK-25 / T116: lacuna do corte (c). Estourar max_restarts com pendência
+      // não mata a lane: espera restart_cooldown_ms (padrão 30 min), zera o
+      // contador e o backoff e volta ao topo, onde a pendência é reconferida.
+      // A lane só encerra por no_pending, stopped ou main_moved.
       if (restarts > maxRestarts) {
-        stoppedReason = "max_restarts";
-        break;
+        await sleep(restartCooldownMs);
+        restarts = 0;
+        backoff = base;
+        continue;
       }
       await sleep(backoff);
       backoff = Math.min(backoff * 2, maxMs);
@@ -234,11 +369,15 @@ export function parseSupervisorConfig(raw: string): {
   backoffBaseMs: number;
   backoffMaxMs: number;
   maxRestarts: number;
+  idleCooldownMs: number;
+  restartCooldownMs: number;
 } {
   const lanes: Lane[] = [];
-  let backoffBaseMs = 50;
-  let backoffMaxMs = 1000;
+  let backoffBaseMs = 60_000;
+  let backoffMaxMs = 600_000;
   let maxRestarts = 3;
+  let idleCooldownMs = 600_000;
+  let restartCooldownMs = 1_800_000;
   let section = "";
   let current: Partial<Lane> | null = null;
   const flush = () => {
@@ -262,6 +401,8 @@ export function parseSupervisorConfig(raw: string): {
       if (key === "backoff_base_ms" || key === "backoff_base") backoffBaseMs = Number(unq(val)) || backoffBaseMs;
       if (key === "backoff_max_ms" || key === "backoff_max") backoffMaxMs = Number(unq(val)) || backoffMaxMs;
       if (key === "max_restarts") maxRestarts = Number(unq(val)) || maxRestarts;
+      if (key === "idle_cooldown_ms") idleCooldownMs = Number(unq(val)) || idleCooldownMs;
+      if (key === "restart_cooldown_ms") restartCooldownMs = Number(unq(val)) || restartCooldownMs;
       if (key === "lanes") {
         // array form
         if (val.startsWith("[")) {
@@ -297,7 +438,7 @@ export function parseSupervisorConfig(raw: string): {
     }
   }
   flush();
-  return { lanes, backoffBaseMs, backoffMaxMs, maxRestarts };
+  return { lanes, backoffBaseMs, backoffMaxMs, maxRestarts, idleCooldownMs, restartCooldownMs };
 }
 
 // Also export default
