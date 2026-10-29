@@ -1,3 +1,7 @@
+// Avaliador determinístico das regras do vigia (PLAN-0023 TASK-02).
+// Cada regra é aplicada com a sua configuração (window_minutes, threshold,
+// severity, action) — não apenas filtrada por id.
+
 export type Alert = {
   rule_id: string;
   severity: string;
@@ -12,6 +16,7 @@ function asEvents(input: any[]): any[] {
 }
 
 function num(v: any): number | null {
+  if (typeof v === "boolean") return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }
@@ -21,17 +26,44 @@ function tsMs(e: any): number {
   return Number.isFinite(t) ? t : 0;
 }
 
+function ruleFor(rules: any[] | null, id: string): any {
+  if (!rules) return undefined;
+  return rules.find((r: any) => r && r.id === id);
+}
+
+function sev(rules: any[] | null, id: string, fallback: string): string {
+  const r = ruleFor(rules, id);
+  return (r && typeof r.severity === "string" && r.severity !== "") ? r.severity : fallback;
+}
+
+function action(rules: any[] | null, id: string): string | undefined {
+  const r = ruleFor(rules, id);
+  if (!r) return undefined;
+  return typeof r.action === "string" && r.action !== "" ? r.action : undefined;
+}
+
+function windowMin(rules: any[] | null, id: string, fallback: number): number {
+  const r = ruleFor(rules, id);
+  const n = num(r?.window_minutes);
+  return n !== null && n >= 0 ? n : fallback;
+}
+
+function threshold(rules: any[] | null, id: string, fallback: number): number {
+  const r = ruleFor(rules, id);
+  const n = num(r?.threshold);
+  return n !== null && n >= 0 ? n : fallback;
+}
+
 export function evaluateWatch(events: any[], rules?: any[]): Alert[] {
   const evs = asEvents(events);
   const rs = Array.isArray(rules) && rules.length > 0 ? rules : null;
-  // default rules if none
-  const ruleIds = (rs ?? []).map((r: any) => r.id);
-  const has = (id: string) => rs === null || ruleIds.includes(id);
+  // default rules when none provided
+  const effectiveRules = rs ?? null;
 
   const alerts: Alert[] = [];
   const seen = new Set<string>();
 
-  const push = (rule_id: string, severity: string, entity: string, summary: string, action?: string) => {
+  const push = (rule_id: string, severity: string, entity: string, summary: string, act?: string) => {
     const key = `${rule_id}:${entity}`;
     if (seen.has(key)) return;
     seen.add(key);
@@ -41,11 +73,13 @@ export function evaluateWatch(events: any[], rules?: any[]): Alert[] {
       entity,
       summary,
       dedupe_key: key,
-      actions: action ? [action] : [],
+      actions: act ? [act] : [],
     });
   };
 
-  // no_progress: heartbeat com progress constante (>=2) e alive
+  const has = (id: string) => effectiveRules === null || effectiveRules.some((r: any) => r && r.id === id);
+
+  // no_progress: heartbeat com progress constante por >= window_minutes.
   if (has("no_progress")) {
     const hearts = evs.filter((e) => e?.kind === "heartbeat");
     const byEntity = new Map<string, any[]>();
@@ -54,85 +88,101 @@ export function evaluateWatch(events: any[], rules?: any[]): Alert[] {
       if (!byEntity.has(ent)) byEntity.set(ent, []);
       byEntity.get(ent)!.push(h);
     }
+    const win = windowMin(effectiveRules, "no_progress", 30);
+    const thr = Math.max(1, threshold(effectiveRules, "no_progress", 1));
     for (const [ent, hs] of byEntity) {
       hs.sort((a, b) => tsMs(a) - tsMs(b));
-      if (hs.length < 2) continue;
+      if (hs.length < thr + 1) continue;
       const progresses = hs.map((h) => h?.data?.progress);
       const allSame = progresses.every((p) => p === progresses[0]);
       const anyAlive = hs.some((h) => h?.data?.alive === true || h?.data?.alive === undefined);
-      if (allSame && anyAlive) {
-        const sev = (rs?.find((r: any) => r.id === "no_progress")?.severity) ?? "high";
-        const action = (rs?.find((r: any) => r.id === "no_progress")?.action);
-        push("no_progress", sev, ent, "heartbeat sem progresso novo na janela", action);
+      if (!allSame || !anyAlive) continue;
+      if (win > 0) {
+        const span = tsMs(hs[hs.length - 1]) - tsMs(hs[0]);
+        if (span < win * 60 * 1000) continue;
       }
+      const sevV = sev(effectiveRules, "no_progress", "high");
+      const act = action(effectiveRules, "no_progress") ?? (effectiveRules ? undefined : "kill_and_retry");
+      push("no_progress", sevV, ent, "heartbeat sem progresso novo na janela", act ?? "kill_and_retry");
     }
   }
 
-  // lane_dead: lane.round start sem end
+  // lane_dead: lane.round start sem end correspondente.
   if (has("lane_dead")) {
     const rounds = evs.filter((e) => e?.kind === "lane.round");
     const starts = rounds.filter((e) => e?.data?.phase === "start");
     const ends = new Set(rounds.filter((e) => e?.data?.phase === "end").map((e) => e?.data?.lane));
+    const thr = Math.max(1, threshold(effectiveRules, "lane_dead", 1));
+    let count = 0;
     for (const s of starts) {
       const lane = String(s?.data?.lane ?? "unknown");
       if (ends.has(lane)) continue;
-      const sev = (rs?.find((r: any) => r.id === "lane_dead")?.severity) ?? "high";
-      const action = (rs?.find((r: any) => r.id === "lane_dead")?.action);
-      push("lane_dead", sev, lane, "lane sem heartbeat/end na janela", action);
+      count++;
     }
-  }
-
-  // main_moved_outside_gate: heartbeats presentes e nenhum gate.result
-  if (has("main_moved_outside_gate")) {
-    const hearts = evs.filter((e) => e?.kind === "heartbeat");
-    const gates = evs.filter((e) => e?.kind === "gate.result");
-    if (hearts.length > 0 && gates.length === 0) {
-      const ent = String(hearts[0]?.data?.entity ?? "repo");
-      const sev = (rs?.find((r: any) => r.id === "main_moved_outside_gate")?.severity) ?? "critical";
-      const action = (rs?.find((r: any) => r.id === "main_moved_outside_gate")?.action);
-      push("main_moved_outside_gate", sev, ent, "mudança em main sem gate.result", action);
-    }
-  }
-
-  // judge_shopping: >=2 receipts judge com mesmo hash
-  if (has("judge_shopping")) {
-    const receipts = evs.filter((e) => e?.kind === "receipt" && (e?.data?.check === "judge" || e?.source === "judge"));
-    if (receipts.length >= 2) {
-      // same hash or same plan
-      const hashes = receipts.map((r) => r?.data?.hash);
-      const allSameHash = hashes.every((h) => h === hashes[0]) && hashes[0] !== undefined;
-      if (allSameHash || receipts.length >= 2) {
-        const sev = (rs?.find((r: any) => r.id === "judge_shopping")?.severity) ?? "warn";
-        const action = (rs?.find((r: any) => r.id === "judge_shopping")?.action);
-        push("judge_shopping", sev, "judge", "mais de um veredito para o mesmo HEAD", action);
+    if (count >= thr) {
+      // alert per unended lane
+      for (const s of starts) {
+        const lane = String(s?.data?.lane ?? "unknown");
+        if (ends.has(lane)) continue;
+        const sevV = sev(effectiveRules, "lane_dead", "high");
+        const act = action(effectiveRules, "lane_dead");
+        push("lane_dead", sevV, lane, "lane sem heartbeat/end na janela", act ?? "restart_lane");
       }
     }
   }
 
-  // report_mismatch: attempt passed true + receipt verify fail/blocked
+  // main_moved_outside_gate: mudança em main (progress) sem gate.result.
+  if (has("main_moved_outside_gate")) {
+    const hearts = evs.filter((e) => e?.kind === "heartbeat");
+    const gates = evs.filter((e) => e?.kind === "gate.result");
+    const progresses = hearts.map((h) => h?.data?.progress);
+    const moved = hearts.length >= 2 && !progresses.every((p) => p === progresses[0]);
+    if (moved && gates.length === 0) {
+      const ent = String(hearts[0]?.data?.entity ?? "repo");
+      const sevV = sev(effectiveRules, "main_moved_outside_gate", "critical");
+      const act = action(effectiveRules, "main_moved_outside_gate");
+      push("main_moved_outside_gate", sevV, ent, "mudança em main sem gate.result", act ?? "alert_critical");
+    }
+  }
+
+  // judge_shopping: >= threshold vereditos judge com mesmo hash.
+  if (has("judge_shopping")) {
+    const receipts = evs.filter((e) => e?.kind === "receipt" && (e?.data?.check === "judge" || e?.source === "judge"));
+    const thr = Math.max(2, threshold(effectiveRules, "judge_shopping", 2));
+    if (receipts.length >= thr) {
+      const hashes = receipts.map((r) => r?.data?.hash);
+      const allSameHash = hashes.length > 0 && hashes.every((h) => h === hashes[0]) && hashes[0] !== undefined;
+      if (allSameHash) {
+        const sevV = sev(effectiveRules, "judge_shopping", "warn");
+        const act = action(effectiveRules, "judge_shopping");
+        push("judge_shopping", sevV, "judge", "mais de um veredito para o mesmo HEAD", act ?? "alert");
+      }
+    }
+  }
+
+  // report_mismatch: attempt passed true + receipt verify fail/blocked.
   if (has("report_mismatch")) {
     const attempts = evs.filter((e) => e?.kind === "attempt");
     const receipts = evs.filter((e) => e?.kind === "receipt" && e?.data?.check === "verify");
     const claimedPass = attempts.some((a) => a?.data?.passed === true);
     const receiptFail = receipts.some((r) => r?.data?.status === "fail" || r?.data?.status === "blocked");
     if (claimedPass && receiptFail) {
-      const sev = (rs?.find((r: any) => r.id === "report_mismatch")?.severity) ?? "warn";
-      const action = (rs?.find((r: any) => r.id === "report_mismatch")?.action);
-      push("report_mismatch", sev, "report", "afirmação de pass com receipt não done", action);
+      const sevV = sev(effectiveRules, "report_mismatch", "warn");
+      const act = action(effectiveRules, "report_mismatch");
+      push("report_mismatch", sevV, "report", "afirmação de pass com receipt não done", act ?? "alert");
     }
   }
 
-  // goal_reached: gate.result code 0 presentes + alvo.check ok, sem falha
+  // goal_reached: gate.result code 0 presentes + alvo.check ok.
   if (has("goal_reached")) {
     const gates = evs.filter((e) => e?.kind === "gate.result");
     const alvos = evs.filter((e) => e?.kind === "alvo.check");
     const allPass = gates.length > 0 && gates.every((g) => num(g?.data?.code) === 0);
     const alvoOk = alvos.length > 0 && alvos.some((a) => a?.data?.ok === true);
-    const noFailGate = gates.every((g) => num(g?.data?.code) === 0);
-    if (allPass && alvoOk && noFailGate) {
-      const sev = (rs?.find((r: any) => r.id === "goal_reached")?.severity) ?? "info";
-      const action = (rs?.find((r: any) => r.id === "goal_reached")?.action);
-      push("goal_reached", sev, "goal", "nenhuma pendência e checks do ALVO verdes", action);
+    if (allPass && alvoOk) {
+      const sevV = sev(effectiveRules, "goal_reached", "info");
+      const act = action(effectiveRules, "goal_reached");
+      push("goal_reached", sevV, "goal", "nenhuma pendência e checks do ALVO verdes", act ?? "notify_done");
     }
   }
 
