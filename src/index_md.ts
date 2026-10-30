@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+try { (global as any).mkdirSync = (global as any).mkdirSync || mkdirSync; } catch {}
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
 import { deriveBoard, type Board } from "./board";
