@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "home_dirs": ["~/.pi", "~/.hermes", "~/.config", "~/.ssh", "~/.local/share/opencode", "~/.aws", "~/.gnupg", "~/.claude", "~/.codex", "~/.gemini", "~/.docker", "~/.kube"],
+  "home_files": ["~/.netrc", "~/.git-credentials", "~/.npmrc", "~/.pypirc"],
+  "abs_globs": ["^/proc/(self|thread-self|\\d+|\\*)/environ$", "^/etc/(shadow|gshadow)$"],
+  "basename_any": ["^\\.env(\\..+)?$", "^\\.envrc$"],
+  "basename_outside_cwd": ["^auth\\.json$", "^credentials(\\.json)?$", "\\.pem$", "\\.key$", "^id_(rsa|ed25519|ecdsa|dsa)(\\.pub)?$", "\\.(p12|pfx)$", "^service-account.*\\.json$"],
+  "basename_allow": ["^\\.env\\.(example|sample|template|dist)$"],
+  "shell": [
+    {"id": "env_dump", "re": "(^|[;&|(`]|\\$\\()\\s*(env|printenv|export\\s+-p|declare\\s+-[a-zA-Z]*[px][a-zA-Z]*|typeset\\s+-[a-zA-Z]*x[a-zA-Z]*|compgen\\s+-e|set)\\s*($|[|;&><)`])"},
+    {"id": "env_dump", "re": "(^|[;&|(`]|\\$\\()\\s*(printenv|env\\s+(-0|--null))\\b"},
+    {"id": "env_inline", "re": "\\b(python3?|node|bun|deno|ruby|perl|php)\\b[^\\n]*\\s(-c|-e|-p|--eval|--print)\\b[^\\n]*(os\\.environ|process\\.env|Deno\\.env|ENV\\[|\\$ENV\\{|getenv)"}
+  ],
+  "content": [
+    {"id": "key_sk", "re": "\\bsk-(ant-|or-v1-|proj-)?[A-Za-z0-9_-]{32,}"},
+    {"id": "key_nvapi", "re": "\\bnvapi-[A-Za-z0-9_-]{32,}"},
+    {"id": "key_github", "re": "\\b(gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,})"},
+    {"id": "key_aws", "re": "\\b(AKIA|ASIA)[0-9A-Z]{16}\\b"},
+    {"id": "key_jwt", "re": "\\beyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}"},
+    {"id": "key_google", "re": "\\bAIza[0-9A-Za-z_-]{35}\\b"},
+    {"id": "key_slack", "re": "\\bxox[abprs]-[A-Za-z0-9-]{20,}"},
+    {"id": "key_discord", "re": "\\b[MN][A-Za-z0-9]{23,25}\\.[A-Za-z0-9_-]{6}\\.[A-Za-z0-9_-]{27,}"},
+    {"id": "key_pem", "re": "-----BEGIN [A-Z ]*PRIVATE KEY-----"}
+  ]
+}
