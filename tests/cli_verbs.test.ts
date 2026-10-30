@@ -95,6 +95,7 @@ const CASES: Record<string, { argv: string[]; args: Record<string, string>; via?
   verify: { argv: ["verify", "tasks/T1/PLAN.md"], args: { arg1: "tasks/T1/PLAN.md" }, bin: ["pinga"] },
   maestro: { argv: ["maestro", "scoreboard"], args: { arg1: "scoreboard" }, bin: ["pinga"] },
   gira: { argv: ["gira", "outline", "src/a.ts"], args: { arg1: "outline", arg2: "src/a.ts" }, bin: ["gira"] },
+  handoff: { argv: ["handoff", "PLAN-0001"], args: { plan: "PLAN-0001" } },
 };
 
 describe("CLI gerada do registro", () => {
