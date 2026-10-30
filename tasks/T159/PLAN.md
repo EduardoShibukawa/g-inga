@@ -7,7 +7,9 @@ touch:
   - web/app.js
   - web/style.css
   - src/api/server.ts
+  - src/serve.ts
   - tests/web_shell.test.ts
+  - tasks/T159/PLAN.md
 tests_frozen: [tests/web_shell.test.ts]
 pinga_task: T159
 pinga_root: /home/shibuka/Projetos/duh-homelab/ginga

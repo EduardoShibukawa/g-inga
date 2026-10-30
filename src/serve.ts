@@ -12,7 +12,7 @@
 // O serve roda para sempre e precisa do event loop, então src/cli.ts usa este
 // arquivo como worker (sync fachada → `bun src/serve.ts serve …`).
 
-import { readFileSync, watch } from "node:fs";
+import { existsSync, readFileSync, watch } from "node:fs";
 import { join, resolve } from "node:path";
 import { runTick } from "./tick.ts";
 import { parseCommands } from "./tick.ts";
@@ -287,7 +287,17 @@ export async function runServe(args: string[]): Promise<number> {
     hostname: host,
     port: cfg.port,
     eventsPath: eventsPath !== "" ? eventsPath : undefined,
-    fallback: () => new Response("ginga serve\n"),
+    fallback: (req: Request) => {
+      const webDir = join(base, "web");
+      const url = new URL(req.url);
+      let rel = url.pathname === "/" ? "index.html" : url.pathname.replace(/^\/+/, "");
+      if (rel.includes("..")) return new Response("not found", { status: 404 });
+      const full = join(webDir, rel);
+      if (!existsSync(full)) return new Response("not found", { status: 404 });
+      const ext = rel.split(".").pop()?.toLowerCase();
+      const type = ext === "html" ? "text/html" : ext === "js" ? "text/javascript" : ext === "css" ? "text/css" : "application/octet-stream";
+      return new Response(readFileSync(full), { status: 200, headers: { "content-type": type } });
+    },
     ...(authOn
       ? { auth: { ...(token !== undefined ? { token } : {}), ...(allow.length > 0 ? { allow } : {}) } }
       : {}),
