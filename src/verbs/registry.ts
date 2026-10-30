@@ -10,6 +10,7 @@ import * as ops from "./ops.ts";
 import * as read from "./read";
 import * as triageVerb from "./triage";
 import * as write from "./write";
+import { HANDOFF_VERBS } from "./handoff";
 
 export type VerbCtx = { by: string; via: string; root: string; db: Database };
 /** `bool` marca argumento flag (`--yes`): a CLI aceita sem valor (T127). */
@@ -51,6 +52,7 @@ export const VERBS: Verb[] = [
   { name: "verify", args: ops.passthrough(true), write: true, run: ops.verify },
   { name: "maestro", args: ops.passthrough(true), write: true, run: ops.maestro },
   { name: "gira", args: ops.passthrough(true), write: true, run: ops.gira },
+  ...HANDOFF_VERBS,
 ];
 
 export function getVerb(name: string): Verb | undefined {
