@@ -8,7 +8,10 @@ touch:
   - web/style.css
   - src/api/server.ts
   - src/serve.ts
+  - src/board.ts
+  - tests/verbs.test.ts
   - tests/web_shell.test.ts
+  - tasks/T158/PLAN.md
   - tasks/T159/PLAN.md
 tests_frozen: [tests/web_shell.test.ts]
 pinga_task: T159
