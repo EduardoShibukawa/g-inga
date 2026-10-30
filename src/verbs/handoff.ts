@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { VerbCtx, VerbArgs } from "./registry.ts";
 import { buildHandoff } from "../handoff.ts";
+import { runHook } from "../handoff/hook.ts";
+export { runHook };
 import { emitEvent } from "../events/emit.ts";
 
 function gitReal(args: string[], cwd: string): string {
