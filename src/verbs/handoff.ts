@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import type { VerbCtx, VerbArgs } from "./registry.ts";
 import { buildHandoff } from "../handoff.ts";
 import { emitEvent } from "../events/emit.ts";
@@ -39,7 +39,8 @@ async function run(ctx: VerbCtx, args: VerbArgs): Promise<unknown> {
     },
   });
 
-  return { path, tokens, markdown };
+  const relPath = relative(ctx.root, path) || path;
+  return { path: relPath, tokens, markdown };
 }
 
 export const HANDOFF_VERBS = [
