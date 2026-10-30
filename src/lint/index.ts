@@ -5,6 +5,7 @@ import { lintDag } from "./dag.ts";
 import { lintDocument, TYPES, type LintError } from "./frontmatter.ts";
 import { lintRelations, lintTaskName, type Artifact } from "./relations.ts";
 import { lintLearnings, type LintIssue } from "./learnings.ts";
+import { lintProjectToml } from "./project_toml.ts";
 
 export type { LintError } from "./frontmatter.ts";
 export type { LintIssue } from "./learnings.ts";
@@ -49,6 +50,7 @@ export function lintBundle(dir: string): LintResult {
 
   errors.push(...lintRelations(artifacts));
   errors.push(...lintDag(artifacts));
+  errors.push(...lintProjectToml(dir));
   const learnings = lintPlanLearnings(dir, artifacts);
   errors.push(...learnings.issues);
 
