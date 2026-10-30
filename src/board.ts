@@ -139,6 +139,30 @@ function getIntentTrack(root: string, intentId: string): "pequena" | "feature" |
   return undefined;
 }
 
+
+function tableExists(db: Database, name: string): boolean {
+  try {
+    return db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== null;
+  } catch {
+    return false;
+  }
+}
+
+function parseJson(value: unknown): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(String(value));
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function eventData(row: Record<string, any>): Record<string, any> {
+  const env = parseJson(row.json);
+  const data = env.data;
+  return data && typeof data === "object" ? (data as Record<string, any>) : env;
+}
+
 export function deriveBoard(root: string, db: Database): Board {
   const items = listBundle(root);
   const columns: Record<Column, Card[]> = {
@@ -257,5 +281,96 @@ export function deriveBoard(root: string, db: Database): Board {
     }
   }
 
+  // Blockers abertos (eventos kind=blocker sem answer).
+  const answered = new Set<string>();
+  if (tableExists(db, "answers")) {
+    try {
+      for (const row of db.query('SELECT "blocker_id" FROM answers').all() as Array<Record<string, any>>) {
+        answered.add(String(row.blocker_id));
+      }
+    } catch {
+      // ignore
+    }
+  }
+  try {
+    for (const row of db.query("SELECT id, ts, plan, task, json FROM events WHERE kind = 'blocker' ORDER BY ts").all() as Array<Record<string, any>>) {
+      const data = eventData(row);
+      const blockerId = typeof data.blocker_id === "string" ? data.blocker_id : null;
+      if (!blockerId || answered.has(blockerId)) continue;
+      inbox.push({
+        id: blockerId,
+        type: "blocker",
+        entity: row.plan ?? undefined,
+        title: typeof data.question === "string" ? data.question : blockerId,
+        question: data.question ?? null,
+        raised_by: data.raised_by ?? null,
+        plan: row.plan ?? null,
+        task: row.task ?? null,
+        actions: ["answer"],
+      });
+    }
+  } catch {
+    // ignore
+  }
+
+  // Budget cap.
+  try {
+    for (const row of db.query("SELECT id, plan, task, json FROM events WHERE kind = 'budget' ORDER BY ts").all() as Array<Record<string, any>>) {
+      const data = eventData(row);
+      if (data.level !== "cap") continue;
+      inbox.push({
+        id: String(row.id),
+        type: "budget",
+        entity: row.plan ?? undefined,
+        title: `budget cap ${row.plan ?? ""}`.trim(),
+        plan: row.plan ?? null,
+        task: row.task ?? null,
+        actions: ["budget raise"],
+      });
+    }
+  } catch {
+    // ignore
+  }
+
+  // Decisões pendentes (tasks escaladas).
+  if (tableExists(db, "task_exec")) {
+    try {
+      for (const row of db.query("SELECT plan, task FROM task_exec WHERE status = 'escalated'").all() as Array<Record<string, any>>) {
+        inbox.push({
+          id: `${row.plan}/${row.task}`,
+          type: "decidir",
+          entity: row.plan ?? undefined,
+          title: `${row.plan}/${row.task}`,
+          plan: row.plan ?? null,
+          task: row.task ?? null,
+          actions: ["decide"],
+        });
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // Learnings a promover.
+  try {
+    for (const row of db.query("SELECT id, plan, task, json FROM events WHERE kind = 'learning' ORDER BY ts").all() as Array<Record<string, any>>) {
+      const data = eventData(row);
+      if (data.promoted === true) continue;
+      const lid = typeof data.learning_id === "string" ? data.learning_id : String(row.id);
+      inbox.push({
+        id: lid,
+        type: "promover",
+        entity: row.plan ?? undefined,
+        title: lid,
+        plan: row.plan ?? null,
+        task: row.task ?? null,
+        actions: ["promote"],
+      });
+    }
+  } catch {
+    // ignore
+  }
+
   return { columns, inbox };
 }
+

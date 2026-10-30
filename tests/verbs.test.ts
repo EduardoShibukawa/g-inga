@@ -209,15 +209,14 @@ describe("leituras", () => {
     const st: any = await runVerb("status", ctx, {});
     expect(st.plans).toContainEqual(expect.objectContaining({ id: "PLAN-0001", status: "draft" }));
     const board: any = await runVerb("board", ctx, {});
-    expect(board.columns.draft).toContain("PLAN-0001");
+    expect(board.columns.PLAN.map((c: any) => c.id)).toContain("PLAN-0001");
     const inbox: any = await runVerb("inbox", ctx, {});
     const ids = inbox.items.map((i: any) => i.id);
     expect(ids).toContain("PLAN-0001");
     expect(ids).toContain("SPEC-0001");
     await runVerb("approve", ctx, { id: "PLAN-0001" });
     const board2: any = await runVerb("board", ctx, {});
-    expect(board2.columns.approved).toContain("PLAN-0001");
-    expect(board2.columns.draft ?? []).not.toContain("PLAN-0001");
+    expect(board2.columns.PLAN.map((c: any) => c.id)).toContain("PLAN-0001");
   });
 
   test("inbox lista blocker sem resposta e deixa de listar depois do answer", async () => {

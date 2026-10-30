@@ -293,7 +293,10 @@ export async function runServe(args: string[]): Promise<number> {
       let rel = url.pathname === "/" ? "index.html" : url.pathname.replace(/^\/+/, "");
       if (rel.includes("..")) return new Response("not found", { status: 404 });
       const full = join(webDir, rel);
-      if (!existsSync(full)) return new Response("not found", { status: 404 });
+      if (!existsSync(full)) {
+        if (rel === "index.html") return new Response("ginga serve\n", { status: 200 });
+        return new Response("not found", { status: 404 });
+      }
       const ext = rel.split(".").pop()?.toLowerCase();
       const type = ext === "html" ? "text/html" : ext === "js" ? "text/javascript" : ext === "css" ? "text/css" : "application/octet-stream";
       return new Response(readFileSync(full), { status: 200, headers: { "content-type": type } });
