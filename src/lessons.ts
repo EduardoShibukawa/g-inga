@@ -104,6 +104,74 @@ function parseLearnings(text: string): LearningEntry[] {
   return entries;
 }
 
+/** Busca lições pelo prefixo/glob de scope.files e filtro de repo.
+ *  Retorna array de { id, title, path, why } onde `why` é o trecho do match.
+ *  Sem busca semântica/LLM: match por prefixo/glob de scope.files do learning.
+ *  Repo diferente não traz a lesson.
+ */
+export function findLessons(root: string, filePaths: string[], repo?: string): (Lesson & { why: string })[] {
+  const lessonsDir = join(root, "knowledge", "lessons");
+  if (!existsSync(lessonsDir)) return [];
+
+  const lessons = readdirSync(lessonsDir).filter((f) => /^LESSON-\d+.*\.md$/.test(f));
+
+  const result: (Lesson & { why: string })[] = [];
+
+  // Função simples de match de glob: converte "pattern" para comparação de prefixo
+  function globMatch(pattern: string, str: string): boolean {
+    // Se o pattern termina com "/", faz match de prefixo de diretório
+    if (pattern.endsWith("/")) {
+      const prefix = pattern.slice(0, -1);
+      return str.startsWith(prefix + "/") || str === prefix;
+    }
+    // Converte pattern para regex simples: * vira .* e ? vira .
+    const regexStr = "^" + pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$";
+    return new RegExp(regexStr).test(str);
+  }
+
+  for (const lessonFile of lessons) {
+    const content = readSafe(join(lessonsDir, lessonFile));
+    const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+    if (!fmMatch) continue;
+    const fm = Bun.YAML.parse(fmMatch[1]) as { scope?: { repo: string; files: string[]; symbols: string[]; tags: string[] } };
+    const lessonScope = fm.scope;
+
+    // Filtro de repo
+    if (repo) {
+      if (lessonScope?.repo && lessonScope.repo !== repo) continue;
+      if (!lessonScope?.repo) continue; // só considera se o learning tem repo e o filtro pediu repo
+    }
+
+    // Filtro de scope.files
+    if (lessonScope?.files) {
+      for (const pattern of lessonScope.files) {
+        let matched = false;
+        for (const fp of filePaths) {
+          if (globMatch(pattern, fp)) {
+            matched = true;
+            break;
+          }
+        }
+        if (matched) {
+          // Extrair o "why" do evidence do learning
+          const whyMatch = content.match(/evidence:\s*(.+)/i);
+          const why = whyMatch ? whyMatch[1].trim() : "match por scope.files";
+          const lessonIdMatch = lessonFile.match(/^LESSON-\d+/);
+  const lessonId = lessonIdMatch ? lessonIdMatch[0] : lessonFile.replace(/\.md$/, "");
+  result.push({
+    id: lessonId,
+    title: "",
+    path: join("knowledge", "lessons", lessonFile),
+    why,
+  });
+          break; // só precisa de um match por learning (para esse pattern)
+        }
+      }
+    }
+  }
+  return result;
+}
+
 /** Próximo número LESSON-NNNN pelo máximo existente em knowledge/lessons/. */
 function nextLessonNumber(lessonsDir: string): number {
   let next = 1;
@@ -173,7 +241,8 @@ export function promote(root: string, ref: string): Lesson {
   const scope = { repo, files, symbols: [] as string[], tags: [entry.status].filter(Boolean) };
 
   const slug = slugify(entry.conclusion || entry.evidence || learningId);
-  const path = join(lessonsDir, `${id}-${slug}.md`);
+  const fullPath = join(lessonsDir, `${id}-${slug}.md`);
+  const path = fullPath;
 
   const fm: string[] = [
     "type: lesson",
@@ -200,7 +269,7 @@ export function promote(root: string, ref: string): Lesson {
   if (entry.conclusion) body.push(`- conclusão: ${entry.conclusion}`);
   if (entry.scope) body.push(`- escopo: ${entry.scope}`);
   body.push("");
-  writeFileSync(path, body.join("\n"), "utf8");
+  writeFileSync(fullPath, body.join("\n"), "utf8");
 
   // Marca o learning original como promovida no cabeçalho (`· promovida`).
   const lines = raw.split(/\r?\n/);
@@ -211,7 +280,7 @@ export function promote(root: string, ref: string): Lesson {
   return {
     id,
     title,
-    path,
+    path: fullPath.replace(root + "/", ""),
     from: `${planId}#${learningId}`,
     status: entry.status,
     scope,

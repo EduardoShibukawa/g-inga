@@ -35,8 +35,13 @@ function fixture(): Fx {
   mkdirSync(join(root, "plans", "PLAN-0001-auth"), { recursive: true });
   writeFileSync(join(root, "intents", "INTENT-0001-primeiro.md"), "---\ntype: intent\ntitle: Primeiro\nsource: cli\ntimestamp: 2026-10-27T00:00:00Z\n---\nCorpo.\n");
   writeFileSync(join(root, "specs", "SPEC-0001-auth.md"), "---\ntype: spec\ntitle: Auth\nstatus: draft\n---\n## Objetivo\nx\n");
-  writeFileSync(join(root, "plans", "PLAN-0001-auth", "PLAN.md"), "---\ntype: plan\ntitle: Auth plan\nstatus: draft\n---\n## Objetivo\nx\n");
+  writeFileSync(join(root, "plans", "PLAN-0001-auth", "PLAN.md"), "---\ntype: plan\ntitle: Auth plan\nstatus: draft\nrepos: [ginga]\n---\n## Objetivo\nx\n");
   writeFileSync(join(root, "plans", "PLAN-0001-auth", "log.md"), "# Log — PLAN-0001\n");
+  writeFileSync(join(root, "plans", "PLAN-0001-auth", "LEARNINGS.md"), "# Learnings\n\n## L-01 · confirmada · 2026-10-30\n- hipótese: h1\n- evidência: ev1\n- conclusão:Conclusão um\n- escopo: src/\n");
+  mkdirSync(join(dir, "tests/fixtures/lessons-import"), { recursive: true });
+  const lessonsProposedPath = join(import.meta.dir, "fixtures", "lessons-import", "LESSONS-PROPOSED.md");
+  const lessonsProposedContent = existsSync(lessonsProposedPath) ? readFileSync(lessonsProposedPath, "utf8") : "## Lição teste\n";
+  writeFileSync(join(dir, "tests/fixtures/lessons-import/LESSONS-PROPOSED.md"), lessonsProposedContent);
   const db = join(dir, "state.db");
   const conn = openStateDb(db);
   conn
@@ -96,6 +101,9 @@ const CASES: Record<string, { argv: string[]; args: Record<string, string>; via?
   maestro: { argv: ["maestro", "scoreboard"], args: { arg1: "scoreboard" }, bin: ["pinga"] },
   gira: { argv: ["gira", "outline", "src/a.ts"], args: { arg1: "outline", arg2: "src/a.ts" }, bin: ["gira"] },
   handoff: { argv: ["handoff", "PLAN-0001"], args: { plan: "PLAN-0001" } },
+  "learning promote": { argv: ["learning", "promote", "PLAN-0001#L-01"], args: { ref: "PLAN-0001#L-01" } },
+  "lessons find": { argv: ["lessons", "find", "--touch", "src/notify/router.ts", "--repo", "ginga"], args: { touch: "src/notify/router.ts", repo: "ginga" } },
+  "lessons import": { argv: ["lessons", "import", "tests/fixtures/lessons-import/LESSONS-PROPOSED.md"], args: { file: "tests/fixtures/lessons-import/LESSONS-PROPOSED.md" } },
 };
 
 describe("CLI gerada do registro", () => {
