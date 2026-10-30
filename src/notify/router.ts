@@ -8,8 +8,10 @@
 // chama verbos (doc 07, "Regras").
 
 import type { Database } from "bun:sqlite";
+import { dirname } from "node:path";
 import { classify, DEFAULT_RULES } from "./rules.ts";
 import { drain as drainQueue, hasPending as queueHasPending, enqueue as enqueueQueue } from "./queue.ts";
+import { appendPlanLog } from "../plan_log.ts";
 
 export type RouteSendInput = { target: string; text: string; thread?: string };
 export type RouteSendResult = { ok: boolean; thread_id?: string };
@@ -23,7 +25,21 @@ export type RouteOptions = {
   mention?: string;
   /** Sobrescrita por chave de `[notify.rules]` do project.toml. */
   rules?: Record<string, string[]>;
+  /** Raiz do bundle (`.ginga/`) para o log.md automático; ausente → derivada do state.db. */
+  planLogRoot?: string;
 };
+
+/** Raiz do bundle a partir do arquivo do state.db (`<bundle>/state/state.db`); null sem caminho. */
+function bundleRootFromDb(db: Database): string | null {
+  try {
+    const row = db.query("PRAGMA database_list").get() as { file?: string } | null;
+    const file = row?.file ?? "";
+    if (file === "") return null;
+    return dirname(dirname(file));
+  } catch {
+    return null;
+  }
+}
 
 /** Marcador de "já notificado" (permanece no state.db entre rodadas). */
 const MARKED_TABLE = `
@@ -71,6 +87,12 @@ export async function routeEvents(
       markNotified(db, row.id, null);
       continue;
     }
+    // log.md automático (PLAN-0013 TASK-01): todo evento do PLAN vira linha,
+    // mesmo os que não têm canal — idempotente por ev.id, só append.
+    try {
+      const bundleRoot = o.planLogRoot ?? bundleRootFromDb(db);
+      if (bundleRoot !== null) appendPlanLog(bundleRoot, ev);
+    } catch {}
     const key = classify(ev);
     const channels = key ? (rules[key] ?? []) : [];
     if (channels.length === 0) {
