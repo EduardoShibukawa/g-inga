@@ -15,6 +15,8 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { Database } from "bun:sqlite";
 import { emitEvent } from "./events/emit.ts";
+import { getPhase, setPhase } from "./plan_phase.ts";
+import { nextAction } from "./tick_plan.ts";
 
 /** TTL do lease; vencido, outro tick pode assumir a TASK. */
 const LEASE_TTL_MS = 60_000;
@@ -25,11 +27,16 @@ const BUSY_TIMEOUT_MS = 10_000;
 
 type QueueEntry = { ref: string; plan: string; task: string; state: string; blocked_by: string[] };
 type Exec = { plan: string; task: string };
-type Commands = { queue: string; dispatch: string };
+type Commands = { queue: string; dispatch: string; red?: string; run?: string; judge?: string; merge?: string; replan?: string; notify?: string };
 
 const DEFAULT_COMMANDS: Commands = {
   queue: "pinga queue --json --root {root}",
   dispatch: "manda run {plan} --task {task}",
+  red: "manda red {plan}",
+  run: "manda run {plan} {task}",
+  judge: "manda judge {plan}",
+  merge: "bin/merge-gate.sh {plan}",
+  replan: "manda replan {plan} {task}",
 };
 
 /** `queue = "…"`/`dispatch = "…"` da seção [commands] do project.toml. */
@@ -45,7 +52,9 @@ export function parseCommands(raw: string): Partial<Commands> {
     const kv = line.match(/^\s*([A-Za-z0-9_-]+)\s*=\s*"(.*)"\s*$/);
     if (kv && section === "commands") {
       const key = kv[1]! as keyof Commands;
-      if (key === "queue" || key === "dispatch") cmds[key] = kv[2]!;
+      if (key === "queue" || key === "dispatch" || key === "red" || key === "run" || key === "judge" || key === "merge" || key === "replan" || key === "notify") {
+        cmds[key] = kv[2]!;
+      }
     }
   }
   return cmds;
@@ -247,6 +256,12 @@ CREATE TABLE IF NOT EXISTS plan_thread (
   thread_id TEXT,
   PRIMARY KEY (plan, target)
 );
+CREATE TABLE IF NOT EXISTS plan_phase (
+  plan TEXT PRIMARY KEY,
+  phase TEXT,
+  since TEXT,
+  replans INTEGER NOT NULL DEFAULT 0
+);
 `;
 
 /** Abre o state.db tolerando o open em corrida com outro tick (retry curto). */
@@ -265,6 +280,20 @@ function openDbForTick(path: string): Database {
     }
   }
   throw last ?? new Error("state.db indisponível");
+}
+
+function getPlanTasksState(db: Database, plan: string) {
+  // Try to get from task_exec or infer from queue context
+  const rows = db
+    .query("SELECT task, status, attempts FROM task_exec WHERE plan = ?")
+    .all(plan) as Array<{ task: string; status: string | null; attempts: number | null }>;
+  // Also need deps_done and blocked info - for now look up from queue? Or use sensible defaults
+  return rows.map((r) => ({
+    id: plan + "/" + r.task,
+    status: (r.status === "dispatched" ? "pass" : r.status === "failed" ? "fail" : r.status === "blocked" ? "blocked" : "open") as any,
+    attempts: Number(r.attempts ?? 0),
+    deps_done: true,
+  }));
 }
 
 /** Ponto de entrada do worker: `bun src/tick.ts tick […flags]`. */
@@ -305,8 +334,83 @@ export async function runTick(args: string[]): Promise<number> {
   try {
     // dry-run não grada nada: só a fila e, se o db já existir, leitura de lease.
     db = dryRun ? (existsSync(dbPath) ? openDbForTick(dbPath) : null) : openDbForTick(dbPath);
+    
+    // First, try phase-based tick for plans that have plan_phase
+    if (db) {
+      const plans = [...new Set(queue.map(q => q.plan))];
+      for (const plan of plans) {
+        const planPhase = getPhase(db, plan);
+        if (!planPhase) continue; // not phase-managed
+        // Build tasks state from queue entries for this plan
+        const planEntries = queue.filter(q => q.plan === plan);
+        const tasksState = planEntries.map(e => {
+          // Try to get attempts from task_exec
+          let attempts = 0;
+          try {
+            const row = db.query("SELECT attempts, status FROM task_exec WHERE plan = ? AND task = ?").get(plan, e.task) as any;
+            if (row) {
+              attempts = Number(row.attempts ?? 0);
+            }
+          } catch {}
+          // Determine status
+          let status: any = "open";
+          if (e.state === "pass" || e.state === "done") status = "pass";
+          else if (e.state === "fail") status = "fail";
+          else if (e.state === "blocked") status = "blocked";
+          else status = "open";
+          return {
+            id: e.ref,
+            status,
+            attempts,
+            deps_done: (e.blocked_by?.length ?? 0) === 0,
+          };
+        });
+        const action = nextAction({
+          phase: planPhase.phase,
+          tasks: tasksState,
+          cap_ok: true, // assume ok for now
+        });
+        if (action.cmd === "none" || action.cmd === "notify") continue;
+        // Execute action
+        const cmdTemplate = (commands as any)[action.cmd];
+        if (!cmdTemplate) continue;
+        const cmdVars: Record<string, string> = { plan, root: base };
+        if (action.task) cmdVars.task = action.task;
+        const command = fill(cmdTemplate, cmdVars);
+        if (dryRun) {
+          despachadas.push(action.task ? `${plan}/${action.task}` : plan);
+          continue;
+        }
+        const code = await despachar(command, json, () => {});
+        if (code === 0) {
+          despachadas.push(action.task ? `${plan}/${action.task}` : plan);
+          if (!json) console.log(`despachado: ${action.task ? `${plan}/${action.task}` : plan}`);
+          // Update phase based on action
+          if (action.cmd === "red") {
+            setPhase(db, plan, "red", "red");
+          } else if (action.cmd === "run") {
+            setPhase(db, plan, "tasks", "run");
+          } else if (action.cmd === "judge") {
+            setPhase(db, plan, "judge", "judge");
+          } else if (action.cmd === "merge") {
+            setPhase(db, plan, "done", "merge");
+          } else if (action.cmd === "replan") {
+            setPhase(db, plan, "replan", "replan");
+          }
+        } else {
+          console.error(`tick: ${action.task ? `${plan}/${action.task}` : plan} saiu com ${code}`);
+        }
+        continue;
+      }
+    }
+    
     for (const entry of queue) {
       if (entry.state !== "open" || entry.blocked_by.length > 0) continue;
+      // Skip if this plan is phase-managed and we handled it above?
+      if (db) {
+        const pp = getPhase(db, entry.plan);
+        if (pp) continue; // handled in phase-based logic
+      }
       const exec: Exec = { plan: entry.plan, task: entry.task };
       if (dryRun) {
         const row = db ? getRow(db, exec) : null;
@@ -316,8 +420,8 @@ export async function runTick(args: string[]): Promise<number> {
       if (!claim(db, exec, owner)) continue;
       emitTransition(exec);
       const command = fill(commands.dispatch, { plan: exec.plan, task: exec.task, root: base });
-      const code = await despachar(command, json, () => renovate(db, exec, owner));
-      finalize(db, exec, code);
+      const code = await despachar(command, json, () => renovate(db!, exec, owner));
+      finalize(db!, exec, code);
       if (code === 0) {
         despachadas.push(entry.ref);
         if (!json) console.log(`despachado: ${entry.ref}`);
