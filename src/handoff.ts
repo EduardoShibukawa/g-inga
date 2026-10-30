@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { redact } from "./handoff/redact.ts";
 
 function readFileSafe(p: string): string {
   try {
@@ -53,6 +54,14 @@ function extractSection(text: string, heading: string): string {
   const m = text.match(re);
   if (!m) return "";
   return m[0].replace(new RegExp(`^## ${heading}\\s*\\n?`, "i"), "").trim();
+}
+
+/** Extrai a seção incluindo o cabeçalho `## ...`. */
+function extractSectionWithHeader(text: string, heading: string): string {
+  const re = new RegExp(`## ${heading}[\\s\\S]*?(?=\\n## |$)`, "i");
+  const m = text.match(re);
+  if (!m) return "";
+  return m[0].trim();
 }
 
 function parseLearnings(content: string): string[] {
@@ -138,7 +147,7 @@ function loadQueueForRepo(repoDir: string, queueOpt?: (repoDir: string) => any[]
   }
 }
 
-export function buildHandoff(root: string, opts: { plan?: string; now?: Date; git?: (args: string[], cwd: string) => string; queue?: (repoDir: string) => any[] } = {}) {
+export function buildHandoff(root: string, opts: { plan?: string; now?: Date; git?: (args: string[], cwd: string) => string; queue?: (repoDir: string) => any[]; trigger?: "idle" | "context" | "manual" | "boundary"; runtime?: string; from_session?: string; depth?: number; notes?: string; transcript?: string; parent_handoff?: string } = {}) {
   const now = opts.now ?? new Date();
   const git = opts.git ?? (() => "");
   let planNames: string[] = [];
@@ -235,9 +244,22 @@ export function buildHandoff(root: string, opts: { plan?: string; now?: Date; gi
         md += `- ${t}\n`;
       }
     }
-    md += `\n### Próxima TASK aberta\n`;
+    md += `\n### Learnings\n`;
+    for (const l of learnings) md += `${l}\n`;
+    const isSession = !!opts.trigger;
+    md += `\n### ${isSession ? "Próximo passo" : "Próxima TASK aberta"}\n`;
     if (!hasQueue) {
-      md += "sem fila\n";
+      if (isSession) {
+        const indexContent = readFileSafe(join(root, "index.md"));
+        if (indexContent) {
+          const pend = extractSectionWithHeader(indexContent, "Pendências");
+          md += (pend || indexContent || "sem pendências") + "\n";
+        } else {
+          md += "sem pendências\n";
+        }
+      } else {
+        md += "sem fila\n";
+      }
     } else {
       // find first task (order of files) whose state is not done/superseded
       let found: string | null = null;
@@ -255,19 +277,55 @@ export function buildHandoff(root: string, opts: { plan?: string; now?: Date; gi
       if (found) md += `${found}\n`;
       else md += "\n";
     }
-    md += `\n### Learnings\n`;
-    for (const l of learnings) md += `${l}\n`;
     md += `\n### Git\n${gitSection}`;
 
     sections.push(md);
     totalTokens += Math.ceil(md.length / 4);
   }
 
-  const body = sections.join("\n");
+  let body = sections.join("\n");
   const dateStr = now.toISOString().slice(0, 10);
-  const planId = opts.plan ?? "all";
-  const frontmatter = `---\ntype: handoff\nplan: ${planId}\ndate: ${dateStr}\n---\n\n`;
-  const markdown = frontmatter + body;
+  const isSession = !!opts.trigger;
+  const planId = opts.plan ?? (isSession ? "session" : "all");
+
+  // frontmatter com campos de sessão (doc 11 §2)
+  let frontmatterStr = `---\ntype: handoff\nplan: ${planId}\ndate: ${dateStr}`;
+  if (isSession) {
+    frontmatterStr += `\ntrigger: ${opts.trigger}`;
+    if (opts.runtime) frontmatterStr += `\nruntime: ${opts.runtime}`;
+    if (opts.from_session) frontmatterStr += `\nfrom_session: ${opts.from_session}`;
+    if (opts.depth !== undefined) frontmatterStr += `\ndepth: ${opts.depth}`;
+    if (opts.transcript) frontmatterStr += `\ntranscript: ${opts.transcript}`;
+    if (opts.parent_handoff) frontmatterStr += `\nparent_handoff: ${opts.parent_handoff}`;
+  }
+  frontmatterStr += `\n---\n\n`;
+
+  // seções 6 (Do chat) e 7 (Como retomar) — doc 11 §2
+  if (isSession) {
+    body += `\n## Do chat\n`;
+    if (opts.notes) {
+      // truncar notas para caber no budget de ~4k tokens (16000 chars)
+      const retomarOverhead = 300;
+      const budget = Math.max(0, 16000 - frontmatterStr.length - body.length - retomarOverhead);
+      const truncated = opts.notes.length > budget ? opts.notes.slice(0, budget) + "\n...[truncado]" : opts.notes;
+      body += redact(truncated) + "\n";
+    } else {
+      body += "(sem notas)\n";
+    }
+    body += `\n## Como retomar\n`;
+    body += `Sessão origem: ${opts.from_session ?? "desconhecida"}\n`;
+    body += `Profundidade: ${opts.depth ?? 0}\n`;
+    if (opts.transcript) body += `Transcritor: ${opts.transcript}\n`;
+    body += `Prompt: retome o handoff em ${planId}, trabalhe as pendências e reporte no log.md\n`;
+  }
+
+  let markdown = frontmatterStr + body;
+  // safety: nunca ultrapassar 16000 chars
+  if (markdown.length > 16000) {
+    markdown = markdown.slice(0, 16000);
+  }
+
+  totalTokens += Math.ceil(markdown.length / 4);
   const path = join(root, "handoffs", `HANDOFF-${dateStr}-${planId}.md`);
 
   return { markdown, path, tokens: totalTokens };
