@@ -4,30 +4,42 @@ import type { VerbCtx, VerbArgs } from "./registry.ts";
 import { buildHandoff } from "../handoff.ts";
 import { emitEvent } from "../events/emit.ts";
 
+function gitReal(args: string[], cwd: string): string {
+  try {
+    const proc = Bun.spawnSync(["git", ...args], { cwd });
+    if (proc.exitCode !== 0) return "";
+    return new TextDecoder().decode(proc.stdout || new Uint8Array());
+  } catch {
+    return "";
+  }
+}
+
 async function run(ctx: VerbCtx, args: VerbArgs): Promise<unknown> {
   const plan = (args.plan ?? "").trim() || undefined;
-  const { markdown, path, tokens } = buildHandoff(ctx.root, { plan, now: new Date() });
+  const now = new Date();
+  const { markdown, path, tokens } = buildHandoff(ctx.root, { plan, now, git: gitReal });
 
   // ensure handoffs dir
   const dir = join(ctx.root, "handoffs");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
-  const front = `---\ntype: handoff\nplan: ${plan ?? "all"}\ndate: ${new Date().toISOString()}\n---\n\n`;
-  const content = front + markdown;
-  writeFileSync(path, content, "utf8");
+  writeFileSync(path, markdown, "utf8");
 
+  const context_tokens = Math.ceil(markdown.length / 4);
   emitEvent({
     kind: "handoff",
+    source: "cli",
     repo: "ginga",
+    plan: plan ?? "all",
     data: {
       trigger: "boundary",
       handoff_tokens: tokens,
-      plan: plan ?? null,
-      path,
+      context_tokens,
+      file: path,
     },
   });
 
-  return { path, tokens, markdown: content };
+  return { path, tokens, markdown };
 }
 
 export const HANDOFF_VERBS = [
