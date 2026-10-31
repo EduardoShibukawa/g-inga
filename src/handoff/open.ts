@@ -44,6 +44,8 @@ function emitHandoffEvent(
   plan: string | undefined,
   trigger: "cache" | "boundary",
   depth: number,
+  runtime: string,
+  model: string,
 ): void {
   emitEvent({
     kind: "handoff",
@@ -55,6 +57,8 @@ function emitHandoffEvent(
       handoff_tokens: 0,
       depth,
       file: handoffPath,
+      runtime,
+      model,
     },
   });
 }
@@ -76,7 +80,7 @@ export async function openSession(
 
   // Outros runtimes: não abrem sozinhos — devolvem o attachCmd a imprimir.
   const attachCmd = buildAttachCmd(runtime, o.handoffPath);
-  emitHandoffEvent(o.handoffPath, plan, "cache", 0);
+  emitHandoffEvent(o.handoffPath, plan, "cache", 0, runtime, o.model);
   return { ok: true, sessionRef: null, attachCmd };
 }
 

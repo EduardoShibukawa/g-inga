@@ -45,6 +45,8 @@ export async function openClaudeSession(
       handoff_tokens: 0,
       depth: 0,
       file: o.handoffPath,
+      runtime: "claude",
+      model: o.model,
     },
   });
 
