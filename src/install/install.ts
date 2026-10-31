@@ -7,6 +7,7 @@ import {
   readlinkSync,
   lstatSync,
   rmSync,
+  statSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
@@ -196,6 +197,21 @@ export function pickPlugin(
   const hasConfigSource =
     cfg.source !== undefined && cfg.source.trim() !== "";
   if (hasGingaSource || hasConfigSource) {
+    // GINGA_PLUGIN_SOURCE sem [install].plugin só vale quando a fonte é o
+    // marketplace do plugin padrão (pi-harness-local); outra fonte exige o
+    // nome explícito em [install].plugin.
+    if (hasGingaSource && !hasConfigSource) {
+      const src = env.GINGA_PLUGIN_SOURCE!.trim();
+      const marketPath = join(src, ".claude-plugin", "marketplace.json");
+      try {
+        const market = JSON.parse(readFileSync(marketPath, "utf8")) as {
+          name?: unknown;
+        };
+        if (market?.name === `${DEFAULT_PLUGIN}-local`) return DEFAULT_PLUGIN;
+      } catch {
+        // marketplace ilegível: cai no erro abaixo
+      }
+    }
     throw new Error("plugin não definido em [install].plugin");
   }
   return DEFAULT_PLUGIN;
@@ -224,7 +240,63 @@ export function sourceHasPiSkills(source: string): boolean {
   }
 }
 
+/**
+ * Projeção de skills: lista onde cada skill de `.pi/skills/` seria
+ * instalada (Claude, OpenCode, Pi). Só output em dry-run; não grava nada.
+ */
+export function projectSkillsOutput(source: string): string {
+  const skillsDir = join(source, ".pi/skills");
+  if (!existsSync(skillsDir)) return "";
+  let skills: string[];
+  try {
+    skills = readdirSync(skillsDir)
+      .filter((name) => existsSync(join(skillsDir, name, "SKILL.md")))
+      .sort();
+  } catch {
+    return "";
+  }
+  if (skills.length === 0) return "";
+  let out = "=== skills ===\n";
+  for (const name of skills) {
+    out += `+ .claude/skills/${name}/SKILL.md\n`;
+    out += `+ .config/opencode/skills/${name}/SKILL.md\n`;
+    out += `+ .pi/agent/skills/${name}/SKILL.md\n`;
+  }
+  return out;
+}
+
 const SOURCE_GATED_HARNESSES = new Set<string>(["pi", "hermes", "tuios"]);
+
+/**
+ * Pré-requisito que falta para o harness ser instalável, ou null quando ok:
+ * - hermes com fonte local exige `<source>/hermes-plugin/plugin.yaml`
+ *   (symlink local); sem ele o adapter falharia a instalação inteira.
+ * - tuios (`integration install`) exige os dirs de config dos 4 harnesses
+ *   no HOME real; sem eles o binário sai exit 1.
+ */
+export function adapterPrereqMissing(
+  harness: string,
+  source: string,
+  home: string,
+): string | null {
+  if (harness === "hermes") {
+    try {
+      if (!statSync(source).isDirectory()) return null; // fonte remota: usa o CLI
+    } catch {
+      return null;
+    }
+    if (!existsSync(join(source, "hermes-plugin", "plugin.yaml"))) {
+      return "hermes-plugin/plugin.yaml ausente na fonte";
+    }
+    return null;
+  }
+  if (harness === "tuios") {
+    for (const rel of [".claude", ".config/opencode", ".pi/agent", ".hermes"]) {
+      if (!existsSync(join(home, rel))) return `config de ${rel} ausente no HOME`;
+    }
+  }
+  return null;
+}
 
 /** Fonte válida: .claude-plugin/marketplace.json com nome e plugin certos. */
 function validateSource(source: string, plugin: string): string | null {
@@ -756,6 +828,18 @@ export async function installCmd(opts: InstallOptions): Promise<number> {
           continue;
         }
 
+        // Pré-requisito ausente (artefato da fonte / config do HOME): pulado
+        // com a seção visível, em vez de falhar a instalação inteira.
+        const missingArtifact = adapterPrereqMissing(adapter.harness, source, opts.home);
+        if (missingArtifact !== null) {
+          sections.push({
+            harness: adapter.harness,
+            files: [],
+            skippedReason: missingArtifact,
+          });
+          continue;
+        }
+
         // CLI nativo sem binário no PATH: pulado com a seção visível (T13).
         const missing = installMissingInstallBin(adapter, env);
         if (missing !== null) {
@@ -929,6 +1013,10 @@ export async function installCmd(opts: InstallOptions): Promise<number> {
         JSON.stringify({ diff_sha256: diffSha }, null, 2) + "\n",
       );
       if (renderedDiff !== "") process.stdout.write(renderedDiff);
+      if (renderedDiff !== "" && hasPiSkills) {
+        const proj = projectSkillsOutput(source);
+        if (proj !== "") process.stdout.write(proj);
+      }
       return INSTALL_EXIT.ok;
     }
 
