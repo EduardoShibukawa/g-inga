@@ -16,6 +16,12 @@ function gitReal(args: string[], cwd: string): string {
   }
 }
 
+async function runHookVerb(_ctx: VerbCtx, args: VerbArgs): Promise<unknown> {
+  const runtime = (args.runtime ?? "claude").trim() || "claude";
+  const stdin = await Bun.stdin.text();
+  return runHook(runtime, stdin, { now: new Date() });
+}
+
 async function run(ctx: VerbCtx, args: VerbArgs): Promise<unknown> {
   const now = new Date();
   const trigger = (args.trigger as any) || undefined;
@@ -67,6 +73,12 @@ async function run(ctx: VerbCtx, args: VerbArgs): Promise<unknown> {
 }
 
 export const HANDOFF_VERBS = [
+  {
+    name: "handoff hook",
+    args: [{ name: "runtime" }],
+    write: true,
+    run: runHookVerb,
+  },
   {
     name: "handoff",
     args: [{ name: "plan" }, { name: "trigger" }, { name: "runtime" }, { name: "from_session" }, { name: "depth" }, { name: "notes" }, { name: "transcript" }, { name: "parent_handoff" }],

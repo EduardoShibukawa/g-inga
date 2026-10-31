@@ -5,11 +5,15 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseHandoffCfg, decideHandoff, type HandoffCfg, type HandoffState } from "./policy.ts";
 import { transcriptUsage } from "./transcript_usage.ts";
+import { openSession } from "./open.ts";
 import { buildHandoff } from "../handoff.ts";
 
 export type HookDeps = {
   now: Date;
-  open?: (handoffPath: string, opts: { userPrompt: string; model: string }) => Promise<{ sessionRef: string | null }>;
+  open?: (
+    handoffPath: string,
+    opts: { userPrompt: string; model: string },
+  ) => Promise<{ sessionRef: string | null; attachCmd?: string }>;
 };
 
 export type HookOutput = { decision?: "block"; reason?: string };
@@ -62,6 +66,23 @@ function gitSafe(args: string[], cwd: string): string {
     return new TextDecoder().decode(proc.stdout || new Uint8Array());
   } catch {
     return "";
+  }
+}
+
+function spawnRuntime(cmd: string[], args: string[], opts: { cwd: string }): { stdout: string; exitCode: number } {
+  try {
+    const proc = Bun.spawnSync([...cmd, ...args], {
+      cwd: opts.cwd,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    return {
+      stdout: new TextDecoder().decode(proc.stdout),
+      exitCode: proc.exitCode ?? 1,
+    };
+  } catch {
+    return { stdout: "", exitCode: 1 };
   }
 }
 
@@ -143,6 +164,12 @@ export async function runHook(runtime: string, stdin: string, deps: HookDeps): P
     const dir = join(cwd, "handoffs");
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     writeFileSync(path, markdown, "utf8");
+    saveState(cwd, session_id, {
+      ...state,
+      lastHandoffTs: now.toISOString(),
+      depth: state.depth ?? 0,
+      handoffPath: path,
+    });
     return {};
   }
 
@@ -160,12 +187,21 @@ export async function runHook(runtime: string, stdin: string, deps: HookDeps): P
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     writeFileSync(path, markdown, "utf8");
 
-    let sessionRef: string | null = null;
-    if (deps.open) {
-      const result = await deps.open(path, { userPrompt: prompt ?? "", model: "" });
-      sessionRef = result.sessionRef;
-    }
+    const open = deps.open ?? (async (handoffPath: string, opts: { userPrompt: string; model: string }) => {
+      const opened = await openSession(runtime, {
+        handoffPath,
+        userPrompt: opts.userPrompt,
+        model: opts.model,
+        cwd,
+        spawn: spawnRuntime,
+        now,
+      });
+      return { sessionRef: opened.sessionRef, attachCmd: opened.attachCmd };
+    });
+    const opened = await open(path, { userPrompt: prompt ?? "", model: "" });
+    const sessionRef = opened.sessionRef;
     const ref = sessionRef ?? path;
+    const attachCmd = opened.attachCmd ?? `claude attach ${ref}`;
 
     // persiste estado: 1 redirect por sessão
     saveState(cwd, session_id, {
@@ -175,7 +211,7 @@ export async function runHook(runtime: string, stdin: string, deps: HookDeps): P
       handoffPath: path,
     });
 
-    return { decision: "block", reason: `sessão nova ${ref}: claude attach ${ref}` };
+    return { decision: "block", reason: `sessão nova ${ref}: ${attachCmd}` };
   }
 
   return {};
