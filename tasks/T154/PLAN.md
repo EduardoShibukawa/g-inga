@@ -5,6 +5,9 @@ done_when: "bun test tests/install_handoff_claude.test.ts"
 touch:
   - src/install/adapters/claude.ts
   - contrib/claude-mod-handoff/
+  - contrib/claude-mod-handoff/.claude-plugin/plugin.json
+  - contrib/claude-mod-handoff/hooks/hooks.json
+  - contrib/claude-mod-handoff/hooks/register.ts
   - tests/install_handoff_claude.test.ts
 tests_frozen:
   - tests/install_handoff_claude.test.ts
