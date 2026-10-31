@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import type { Database } from "bun:sqlite";
 import { redact } from "./handoff/redact.ts";
 
 function readFileSafe(p: string): string {
@@ -145,6 +146,62 @@ function loadQueueForRepo(repoDir: string, queueOpt?: (repoDir: string) => any[]
   } catch {
     return [];
   }
+}
+
+/** Normaliza uma pasta/ID de PLAN para `PLAN-NNNN`. */
+function canonicalPlanId(raw: string): string | undefined {
+  const match = raw.trim().match(/^PLAN-(\d+)(?:$|[-_/])/i);
+  return match ? `PLAN-${match[1]}` : undefined;
+}
+
+/** Extrai `PLAN-NNNN` de uma branch `plan/NNNN`. */
+function branchPlanId(branch: string): string | undefined {
+  const match = branch.trim().match(/(?:^|\s)plan\/(\d+)(?:\s|$)/i);
+  return match ? `PLAN-${match[1]}` : undefined;
+}
+
+/**
+ * Infere o PLAN ativo na ordem exigida: branch `plan/NNNN`, task_exec no
+ * state.db e, por último, o `log.md` com mtime mais recente.
+ */
+export function inferPlan(root: string, opts: { git?: (args: string[], cwd: string) => string; db?: Database; cwd?: string } = {}): string | undefined {
+  const branch = opts.git?.(["branch", "--show-current"], opts.cwd ?? process.cwd()) ?? "";
+  const fromBranch = branchPlanId(branch);
+  if (fromBranch) return fromBranch;
+
+  if (opts.db) {
+    try {
+      const row = opts.db.query(`
+        SELECT plan
+        FROM task_exec
+        WHERE TRIM(COALESCE(plan, '')) <> ''
+          AND LOWER(COALESCE(status, '')) NOT IN ('dispatched', 'pass', 'done', 'superseded')
+        ORDER BY rowid DESC
+        LIMIT 1
+      `).get() as { plan?: unknown } | null;
+      const fromDb = typeof row?.plan === "string" ? canonicalPlanId(row.plan) : undefined;
+      if (fromDb) return fromDb;
+    } catch {
+      // Um state.db incompatível não impede a inferência pelo log.md.
+    }
+  }
+
+  const plansDir = join(root, "plans");
+  if (!existsSync(plansDir)) return undefined;
+  let newest: { plan: string; mtime: number } | undefined;
+  for (const name of readdirSync(plansDir)) {
+    const plan = canonicalPlanId(name);
+    if (!plan) continue;
+    const logPath = join(plansDir, name, "log.md");
+    if (!existsSync(logPath)) continue;
+    try {
+      const mtime = statSync(logPath).mtimeMs;
+      if (!newest || mtime > newest.mtime) newest = { plan, mtime };
+    } catch {
+      // Log removido durante a leitura: tenta o próximo PLAN.
+    }
+  }
+  return newest?.plan;
 }
 
 export function buildHandoff(root: string, opts: { plan?: string; now?: Date; git?: (args: string[], cwd: string) => string; queue?: (repoDir: string) => any[]; trigger?: "idle" | "context" | "manual" | "boundary"; runtime?: string; from_session?: string; depth?: number; notes?: string; transcript?: string; parent_handoff?: string } = {}) {

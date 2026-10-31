@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { VerbCtx, VerbArgs } from "./registry.ts";
-import { buildHandoff } from "../handoff.ts";
+import { buildHandoff, inferPlan } from "../handoff.ts";
 import { runHook } from "../handoff/hook.ts";
 export { runHook };
 import { emitEvent } from "../events/emit.ts";
@@ -17,16 +17,25 @@ function gitReal(args: string[], cwd: string): string {
 }
 
 async function run(ctx: VerbCtx, args: VerbArgs): Promise<unknown> {
-  const plan = (args.plan ?? "").trim() || undefined;
   const now = new Date();
   const trigger = (args.trigger as any) || undefined;
+  const explicitPlan = (args.plan ?? "").trim() || undefined;
+  const plan = explicitPlan ?? (trigger
+    ? inferPlan(ctx.root, { git: gitReal, db: ctx.db, cwd: process.cwd() })
+    : undefined);
   const opts: any = { plan, now, git: gitReal };
   if (trigger) {
     opts.trigger = trigger;
     if (args.runtime) opts.runtime = args.runtime;
     if (args.from_session) opts.from_session = args.from_session;
     if (args.depth !== undefined) opts.depth = Number(args.depth);
-    if (args.notes) opts.notes = args.notes;
+    if (args.notes !== undefined) {
+      try {
+        opts.notes = readFileSync(args.notes === "-" ? 0 : args.notes, "utf8");
+      } catch {
+        throw new Error("não consegui ler o arquivo de --notes");
+      }
+    }
     if (args.transcript) opts.transcript = args.transcript;
     if (args.parent_handoff) opts.parent_handoff = args.parent_handoff;
   }
