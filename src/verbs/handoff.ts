@@ -72,13 +72,14 @@ async function run(ctx: VerbCtx, args: VerbArgs): Promise<unknown> {
   return { path: relPath, tokens, markdown };
 }
 
+export const HANDOFF_HOOK_VERB = {
+  name: "handoff hook",
+  args: [{ name: "runtime" }],
+  write: true,
+  run: runHookVerb,
+};
+
 export const HANDOFF_VERBS = [
-  {
-    name: "handoff hook",
-    args: [{ name: "runtime" }],
-    write: true,
-    run: runHookVerb,
-  },
   {
     name: "handoff",
     args: [{ name: "plan" }, { name: "trigger" }, { name: "runtime" }, { name: "from_session" }, { name: "depth" }, { name: "notes" }, { name: "transcript" }, { name: "parent_handoff" }],
