@@ -1,0 +1,6 @@
+{
+  "name": "claude-mod-handoff",
+  "description": "Mod do ginga que chama `ginga handoff hook --runtime claude` nos eventos Stop e UserPromptSubmit do Claude Code. Zero lógica de decisão: só repassa o JSON do hook para a CLI do ginga.",
+  "version": "0.1.0",
+  "author": "duh-homelab"
+}

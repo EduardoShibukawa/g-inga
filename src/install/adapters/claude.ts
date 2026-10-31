@@ -5,6 +5,47 @@ import type { Adapter, AdapterContext, Probe } from "../install";
 export const CLAUDE_MARKETPLACE = "pi-" + "harness-local";
 export const CLAUDE_PLUGIN_KEY = "pi-" + "harness" + "@" + "pi-" + "harness-local";
 
+/** true quando o último apply projetou os hooks de handoff (entra no owned). */
+let handoffHooksProjected = false;
+
+/** Comando dos hooks de handoff projetados no settings.json (Stop + UserPromptSubmit). */
+export const CLAUDE_HANDOFF_HOOK_CMD = "ginga handoff hook --runtime claude";
+export const CLAUDE_HANDOFF_HOOK_EVENTS = ["Stop", "UserPromptSubmit"] as const;
+
+/** Acrescenta (idempotente) as entradas de hook de handoff em `settings.hooks`, sem tocar as alheias. */
+export function ensureHandoffHooks(settings: Record<string, unknown>): void {
+  const raw = settings.hooks;
+  const hooks: Record<string, unknown> =
+    raw !== null && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  for (const ev of CLAUDE_HANDOFF_HOOK_EVENTS) {
+    const cur = hooks[ev];
+    const arr: unknown[] = Array.isArray(cur) ? [...cur] : [];
+    const already = arr.some(
+      (e) =>
+        e !== null &&
+        typeof e === "object" &&
+        Array.isArray((e as Record<string, unknown>).hooks) &&
+        ((e as Record<string, unknown>).hooks as unknown[]).some(
+          (h) =>
+            h !== null &&
+            typeof h === "object" &&
+            (h as Record<string, unknown>).command === CLAUDE_HANDOFF_HOOK_CMD,
+        ),
+    );
+    if (!already) {
+      arr.push({
+        matcher: "",
+        hooks: [{ type: "command", command: CLAUDE_HANDOFF_HOOK_CMD }],
+      });
+    }
+    hooks[ev] = arr;
+  }
+  settings.hooks = hooks;
+}
+
+
 function writeJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(value, null, 2) + "\n");
@@ -86,10 +127,12 @@ export const claudeAdapter: Adapter = {
     const plugin = this.plugin ?? ("pi-" + "harness");
     const market = claudeMarketplace(plugin);
     const key = claudeKey(plugin);
+    const settingsOwned = [`/enabledPlugins/${key}`];
+    if (handoffHooksProjected) settingsOwned.push("/hooks/UserPromptSubmit");
     return {
       ".claude/plugins/known_marketplaces.json": [`/${market}`],
       ".claude/plugins/installed_plugins.json": [`/plugins/${key}`],
-      ".claude/settings.json": [`/enabledPlugins/${key}`],
+      ".claude/settings.json": settingsOwned,
     };
   },
 
@@ -106,6 +149,8 @@ export const claudeAdapter: Adapter = {
       ".claude/settings.json": [],
     };
   },
+
+  append: { ".claude/settings.json": ["/hooks"] },
 
   probes: [claudePluginListProbe, claudePluginValidateProbe],
 
@@ -165,6 +210,16 @@ export const claudeAdapter: Adapter = {
         : (settings.enabledPlugins as Record<string, unknown>);
     plugins[key] = true;
     settings.enabledPlugins = plugins;
+    // Hooks de handoff: só na chamada padrão do adapter (sem plugin
+    // parametrizado no ctx). No fluxo do `ginga install` o plugin é sempre
+    // resolvido e passado no ctx — nesse caso os hooks vêm do próprio mod
+    // do plugin (contrib/claude-mod-handoff), e o settings.json existente
+    // fica intocado (contrato congelado da T12/T13).
+    handoffHooksProjected = false;
+    if (ctx.plugin === undefined) {
+      ensureHandoffHooks(settings);
+      handoffHooksProjected = true;
+    }
     writeJson(settingsPath, settings);
   },
 };
