@@ -3,6 +3,7 @@ mode: mvp
 goal: "A skill handoff na fonte única passa no ginga lint e o ginga install --dry-run lista a projeção para Claude, opencode e Pi sem tocar entrada alheia"
 done_when: "bun test tests/skill_handoff.test.ts"
 touch:
+  - src/install/install.ts
   - skills/handoff/SKILL.md
   - skills/handoff/scripts/handoff.ts
   - skills/handoff/references/formato.md
