@@ -1,1 +1,112 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Roda · G-Ingá</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+  <script type="module" src="/inbox.js"></script>
+  <script type="module" src="/board.js"></script>
+  <script type="module" src="/plan.js"></script>
+  <script type="module" src="/alerts.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Pular para o conteúdo</a>
 
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Navegação principal">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">R</span>
+        <span class="brand-copy">
+          <strong>Roda</strong>
+          <small>G-Ingá · duh-homelab</small>
+        </span>
+      </div>
+
+      <nav data-view="inbox|board|plan" class="primary-nav" aria-label="Seções da Roda">
+        <a href="#inbox" data-view="inbox" aria-controls="view-inbox">
+          <span>Inbox</span>
+          <span class="nav-count" data-count aria-label="Pendências">—</span>
+        </a>
+        <a href="#board" data-view="board" aria-controls="view-board">
+          <span>Quadro</span>
+        </a>
+        <a href="#plan" data-view="plan" aria-controls="view-plan">
+          <span>PLAN</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <span class="sidebar-label">Workspace</span>
+        <code>~/.ginga</code>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <div class="topbar-title">
+          <span class="eyebrow">G-Ingá</span>
+          <span>Painel do workspace</span>
+        </div>
+
+        <div class="topbar-actions">
+          <span class="connection" data-connection data-state="connecting" role="status" aria-live="polite">
+            <span class="connection-dot" aria-hidden="true"></span>
+            <span data-connection-label>Conectando</span>
+          </span>
+          <button class="icon-button" type="button" data-refresh-status title="Atualizar estado" aria-label="Atualizar estado">
+            <span aria-hidden="true">↻</span>
+          </button>
+          <button class="theme-toggle" type="button" data-theme-toggle aria-label="Ativar tema escuro" aria-pressed="false">
+            <span class="theme-icon" aria-hidden="true">☾</span>
+            <span data-theme-label>Escuro</span>
+          </button>
+        </div>
+      </header>
+
+      <main id="main-content" class="content" tabindex="-1">
+        <section id="view-inbox" class="view" data-view="inbox" aria-labelledby="title-inbox">
+          <header class="view-header">
+            <div>
+              <p class="eyebrow">Decisões do dono</p>
+              <h1 id="title-inbox">Inbox</h1>
+            </div>
+            <p class="view-description">Pendências que precisam de uma decisão para a fila continuar.</p>
+          </header>
+          <div class="panel" data-inbox aria-live="polite">
+            <p class="empty-state">Carregando as pendências…</p>
+          </div>
+        </section>
+
+        <section id="view-board" class="view" data-view="board" aria-labelledby="title-board" hidden>
+          <header class="view-header">
+            <div>
+              <p class="eyebrow">Fluxo do trabalho</p>
+              <h1 id="title-board">Quadro</h1>
+            </div>
+            <p class="view-description">Da intenção à verificação, em uma leitura única do estado atual.</p>
+          </header>
+          <div class="panel panel-flush" data-board aria-live="polite">
+            <p class="empty-state">Carregando o quadro…</p>
+          </div>
+        </section>
+
+        <section id="view-plan" class="view" data-view="plan" aria-labelledby="title-plan" hidden>
+          <header class="view-header">
+            <div>
+              <p class="eyebrow">Execução verificável</p>
+              <h1 id="title-plan">PLAN</h1>
+            </div>
+            <p class="view-description">TASKs, tentativas, custo e as ações disponíveis no registro de verbos.</p>
+          </header>
+          <div class="panel" data-plan aria-live="polite">
+            <p class="empty-state">Selecione um PLAN no Quadro para abrir o detalhe.</p>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+</body>
+</html>
