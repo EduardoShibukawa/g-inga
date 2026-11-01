@@ -28,7 +28,7 @@ Opcionais, preencher os que existirem: `repo`, `intent`, `spec`, `plan`, `task` 
 | `answer` | ginga | `blocker_id`, `answer`, `by`, `via` |
 | `budget` | manda / ginga | `scope` (`task`, `plan`, `month`), `spent_usd`, `cap_usd`, `level` (`warn`, `cap`) |
 | `quota` | ginga | `provider`, `used_pct`, `window_minutes`, `resets_at`, `source` |
-| `handoff` | ginga | `trigger` (`boundary`, `context`, `cache`), `context_tokens`, `handoff_tokens`, `est_saved_usd`, `file` |
+| `handoff` | ginga | `trigger` (`boundary`, `context`, `cache`, `idle`, `manual`), `context_tokens`, `handoff_tokens`, `est_saved_usd`, `file` |
 | `learning` | sessão / ginga | `learning_id`, `status` (`confirmada`, `descartada`, `fato`, `armadilha`), `promoted` (bool) |
 
 ## Uso no ginga

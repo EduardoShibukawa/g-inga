@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -7,6 +8,7 @@ import {
   readlinkSync,
   lstatSync,
   rmSync,
+  statSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
@@ -196,6 +198,21 @@ export function pickPlugin(
   const hasConfigSource =
     cfg.source !== undefined && cfg.source.trim() !== "";
   if (hasGingaSource || hasConfigSource) {
+    // GINGA_PLUGIN_SOURCE sem [install].plugin só vale quando a fonte é o
+    // marketplace do plugin padrão (pi-harness-local); outra fonte exige o
+    // nome explícito em [install].plugin.
+    if (hasGingaSource && !hasConfigSource) {
+      const src = env.GINGA_PLUGIN_SOURCE!.trim();
+      const marketPath = join(src, ".claude-plugin", "marketplace.json");
+      try {
+        const market = JSON.parse(readFileSync(marketPath, "utf8")) as {
+          name?: unknown;
+        };
+        if (market?.name === `${DEFAULT_PLUGIN}-local`) return DEFAULT_PLUGIN;
+      } catch {
+        // marketplace ilegível: cai no erro abaixo
+      }
+    }
     throw new Error("plugin não definido em [install].plugin");
   }
   return DEFAULT_PLUGIN;
@@ -224,7 +241,211 @@ export function sourceHasPiSkills(source: string): boolean {
   }
 }
 
+const SKILL_SOURCE_DIRS = ["skills", ".pi/skills"] as const;
+const SKILL_TARGET_DIRS = [
+  ".claude/skills",
+  ".config/opencode/skills",
+  ".pi/agent/skills",
+] as const;
+
+/** Nomes das skills existentes em uma das pastas de fonte. */
+function skillNamesIn(source: string, rel: string): string[] {
+  const dir = join(source, rel);
+  try {
+    if (!existsSync(dir)) return [];
+    return readdirSync(dir)
+      .filter((name) => {
+        const skillDir = join(dir, name);
+        try {
+          return (
+            statSync(skillDir).isDirectory() &&
+            existsSync(join(skillDir, "SKILL.md"))
+          );
+        } catch {
+          return false;
+        }
+      })
+      .sort();
+  } catch {
+    // Uma fonte ilegível apenas não contribui skills para a união.
+    return [];
+  }
+}
+
+/**
+ * Nomes das skills da fonte. `skills/` é a fonte canônica do repo ginga;
+ * `.pi/skills/` continua aceito como caminho legado.
+ */
+export function sourceSkills(source: string): string[] {
+  return [
+    ...new Set([
+      ...skillNamesIn(source, "skills"),
+      ...skillNamesIn(source, ".pi/skills"),
+    ]),
+  ].sort();
+}
+
+/** Diretório canônico de uma skill; `skills/` tem precedência sobre o legado. */
+function sourceSkillDir(source: string, name: string): string {
+  for (const rel of SKILL_SOURCE_DIRS) {
+    const dir = join(source, rel, name);
+    if (existsSync(join(dir, "SKILL.md"))) return dir;
+  }
+  return join(source, "skills", name);
+}
+
+/**
+ * Projeção de skills: lista onde cada skill seria instalada (Claude,
+ * OpenCode e Pi). Só output em dry-run; não grava nada. Idempotente: com
+ * `home`, só lista os destinos que ainda não têm a skill instalada (mesmo
+ * SKILL.md) — um 2º dry-run após o apply imprime nada.
+ */
+export function projectSkillsOutput(source: string, home?: string): string {
+  const skills = sourceSkills(source);
+  if (skills.length === 0) return "";
+  let out = "";
+  for (const name of skills) {
+    for (const rel of SKILL_TARGET_DIRS) {
+      if (home !== undefined && existsSync(join(home, rel, name, "SKILL.md"))) continue;
+      out += `+ ${rel}/${name}/SKILL.md\n`;
+    }
+  }
+  if (out === "") return "";
+  return "=== skills ===\n" + out;
+}
+
+/**
+ * Copia as skills da fonte para os três destinos do HOME real. Uma skill
+ * preexistente com outro `SKILL.md` é alheia: o destino inteiro é pulado.
+ */
+function installProjectedSkills(source: string, home: string): string | null {
+  for (const name of sourceSkills(source)) {
+    const srcDir = sourceSkillDir(source, name);
+    const srcSkill = join(srcDir, "SKILL.md");
+    let srcBytes: Buffer;
+    try {
+      srcBytes = readFileSync(srcSkill);
+    } catch (e) {
+      return `falha ao ler skill ${name} da fonte: ${errorMessage(e)}`;
+    }
+
+    for (const rel of SKILL_TARGET_DIRS) {
+      const destDir = join(home, rel, name);
+      const destSkill = join(destDir, "SKILL.md");
+      if (existsSync(destSkill)) {
+        let destBytes: Buffer;
+        try {
+          destBytes = readFileSync(destSkill);
+        } catch {
+          console.error(
+            `pinga install: skill alheia ignorada em ${destSkill}: SKILL.md ilegível`,
+          );
+          continue;
+        }
+        if (!destBytes.equals(srcBytes)) {
+          console.error(
+            `pinga install: skill alheia ignorada em ${destSkill}: SKILL.md difere da fonte`,
+          );
+          continue;
+        }
+      }
+
+      try {
+        if (existsSync(destDir)) {
+          const destStat = lstatSync(destDir);
+          if (destStat.isSymbolicLink()) {
+            // O adaptador pi já materializa skills como symlink para a fonte.
+            // Com o mesmo SKILL.md, a instalação já está satisfeita.
+            if (existsSync(destSkill)) continue;
+            console.error(
+              `pinga install: skill alheia ignorada em ${destDir}: symlink sem SKILL.md`,
+            );
+            continue;
+          }
+          if (!destStat.isDirectory()) {
+            console.error(
+              `pinga install: skill alheia ignorada em ${destDir}: destino não é diretório`,
+            );
+            continue;
+          }
+        }
+        mkdirSync(destDir, { recursive: true });
+        cpSync(srcDir, destDir, { recursive: true, force: true });
+      } catch (e) {
+        return `falha ao instalar skill ${name} em ${destDir}: ${errorMessage(e)}`;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Remove do HOME as skills que o apply instalou (SKILL.md idêntico ao da
+ * fonte) — cópias recursivas fora do manifest de revert. Skill alheia
+ * (SKILL.md diferente) e symlink do adaptador pi ficam intactos.
+ */
+function removeProjectedSkills(source: string, home: string): void {
+  for (const name of sourceSkills(source)) {
+    const srcSkill = join(sourceSkillDir(source, name), "SKILL.md");
+    let srcBytes: Buffer;
+    try {
+      srcBytes = readFileSync(srcSkill);
+    } catch {
+      continue;
+    }
+    for (const rel of SKILL_TARGET_DIRS) {
+      const destDir = join(home, rel, name);
+      const destSkill = join(destDir, "SKILL.md");
+      if (!existsSync(destSkill)) continue;
+      let destBytes: Buffer;
+      try {
+        destBytes = readFileSync(destSkill);
+      } catch {
+        continue;
+      }
+      if (!destBytes.equals(srcBytes)) continue; // skill alheia
+      try {
+        if (lstatSync(destDir).isSymbolicLink()) continue; // symlink do adaptador pi
+      } catch {
+        continue;
+      }
+      rmSync(destDir, { recursive: true, force: true });
+    }
+  }
+}
+
 const SOURCE_GATED_HARNESSES = new Set<string>(["pi", "hermes", "tuios"]);
+
+/**
+ * Pré-requisito que falta para o harness ser instalável, ou null quando ok:
+ * - hermes com fonte local exige `<source>/hermes-plugin/plugin.yaml`
+ *   (symlink local); sem ele o adapter falharia a instalação inteira.
+ * - tuios (`integration install`) exige os dirs de config dos 4 harnesses
+ *   no HOME real; sem eles o binário sai exit 1.
+ */
+export function adapterPrereqMissing(
+  harness: string,
+  source: string,
+  home: string,
+): string | null {
+  if (harness === "hermes") {
+    try {
+      if (!statSync(source).isDirectory()) return null; // fonte remota: usa o CLI
+    } catch {
+      return null;
+    }
+    if (!existsSync(join(source, "hermes-plugin", "plugin.yaml"))) {
+      return "hermes-plugin/plugin.yaml ausente na fonte";
+    }
+    return null;
+  }
+  if (harness === "tuios") {
+    for (const rel of [".claude", ".config/opencode", ".pi/agent", ".hermes"]) {
+      if (!existsSync(join(home, rel))) return `config de ${rel} ausente no HOME`;
+    }
+  }
+  return null;
+}
 
 /** Fonte válida: .claude-plugin/marketplace.json com nome e plugin certos. */
 function validateSource(source: string, plugin: string): string | null {
@@ -349,7 +570,12 @@ export function checkForeign(input: {
   }
 
   // Homônima: chave que é do pinga e já existia, sem registro no manifest.
+  // Ponteiros owned sob prefixo de `append` não sofrem checagem de homônima
+  // (§A.4): sob `append` só `+` é aceito, e a entrada fica registrada no
+  // manifest pelo próprio acréscimo (ex.: /hooks/Stop do adapter Claude com
+  // hook alheio preexistente no mesmo evento).
   for (const ownedPtr of owned) {
+    if (isUnderAppend(ownedPtr)) continue;
     if (!pointerExists(input.before, ownedPtr)) continue;
     const registered = input.manifest.entries.some(
       (e) =>
@@ -573,6 +799,7 @@ function rmTarget(abs: string): void {
 async function revertCmd(
   opts: InstallOptions,
   manifestPath: string,
+  source: string,
 ): Promise<number> {
   let manifest: Manifest;
   try {
@@ -638,6 +865,10 @@ async function revertCmd(
     }
   }
 
+  // Skills instaladas pelo apply (fora do manifest): remove as cópias com
+  // SKILL.md idêntico ao da fonte; alheias ficam intactas.
+  removeProjectedSkills(source, home);
+
   writeAtomic(
     manifestPath,
     JSON.stringify({ version: 1, entries: [] }, null, 2) + "\n",
@@ -692,7 +923,7 @@ export async function installCmd(opts: InstallOptions): Promise<number> {
     }
 
     if (opts.mode === "revert") {
-      const rc = await revertCmd(opts, manifestPath);
+      const rc = await revertCmd(opts, manifestPath, source);
       if (rc === 0) {
         try {
           rmSync(join(opts.home, ".config", "systemd", "user", "ginga-supervisor.service"), { force: true });
@@ -753,6 +984,18 @@ export async function installCmd(opts: InstallOptions): Promise<number> {
         // Fonte sem .pi/skills: integrações nativas puladas em silêncio.
         if (SOURCE_GATED_HARNESSES.has(adapter.harness) && !hasPiSkills) {
           sections.push({ harness: adapter.harness, files: [] });
+          continue;
+        }
+
+        // Pré-requisito ausente (artefato da fonte / config do HOME): pulado
+        // com a seção visível, em vez de falhar a instalação inteira.
+        const missingArtifact = adapterPrereqMissing(adapter.harness, source, opts.home);
+        if (missingArtifact !== null) {
+          sections.push({
+            harness: adapter.harness,
+            files: [],
+            skippedReason: missingArtifact,
+          });
           continue;
         }
 
@@ -929,6 +1172,8 @@ export async function installCmd(opts: InstallOptions): Promise<number> {
         JSON.stringify({ diff_sha256: diffSha }, null, 2) + "\n",
       );
       if (renderedDiff !== "") process.stdout.write(renderedDiff);
+      const proj = projectSkillsOutput(source, opts.home);
+      if (proj !== "") process.stdout.write(proj);
       return INSTALL_EXIT.ok;
     }
 
@@ -971,6 +1216,11 @@ export async function installCmd(opts: InstallOptions): Promise<number> {
         const link = ensureBinLink(opts.home, opts.env?.PATH);
         if (!link.onPath) console.error("aviso: ~/.local/bin não está no PATH");
       } catch {}
+      const skillError = installProjectedSkills(source, opts.home);
+      if (skillError !== null) {
+        console.error(`pinga install: ${skillError}`);
+        return INSTALL_EXIT.infra;
+      }
       return INSTALL_EXIT.ok;
     }
     if (dirtyFiles.size === 0 && unlinkFiles.size === 0) {
@@ -1057,6 +1307,10 @@ export async function installCmd(opts: InstallOptions): Promise<number> {
           throw infraError(`sombra -> real falhou para ${file}`);
         }
       }
+
+      // As skills são cópias recursivas fora do manifest de revert.
+      const skillError = installProjectedSkills(source, opts.home);
+      if (skillError !== null) throw infraError(skillError);
 
       // 6. Manifest atômico: entradas por ponteiro (owned/append/new) e
       //    sha256_pre/post compartilhados entre harnesses do mesmo arquivo.
