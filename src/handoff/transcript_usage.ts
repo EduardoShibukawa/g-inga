@@ -19,8 +19,10 @@ export function transcriptUsage(path: string): { contextTokens: number; lastApiT
     if (!line.trim()) continue;
     try {
       const event = JSON.parse(line);
-      if (event.type === "assistant" && event.usage) {
-        const u = event.usage;
+      // Formato real do Claude: `usage` vem em `message.usage`; a raiz fica como
+      // fallback dos fixtures antigos (PLAN-0013 TASK-26, judge 2026-11-01).
+      const u = event.message?.usage ?? event.usage;
+      if (event.type === "assistant" && u) {
         contextTokens =
           (u.input_tokens || 0) +
           (u.cache_read_input_tokens || 0) +
