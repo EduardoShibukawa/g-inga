@@ -296,18 +296,22 @@ function sourceSkillDir(source: string, name: string): string {
 
 /**
  * Projeção de skills: lista onde cada skill seria instalada (Claude,
- * OpenCode e Pi). Só output em dry-run; não grava nada.
+ * OpenCode e Pi). Só output em dry-run; não grava nada. Idempotente: com
+ * `home`, só lista os destinos que ainda não têm a skill instalada (mesmo
+ * SKILL.md) — um 2º dry-run após o apply imprime nada.
  */
-export function projectSkillsOutput(source: string): string {
+export function projectSkillsOutput(source: string, home?: string): string {
   const skills = sourceSkills(source);
   if (skills.length === 0) return "";
-  let out = "=== skills ===\n";
+  let out = "";
   for (const name of skills) {
-    out += `+ .claude/skills/${name}/SKILL.md\n`;
-    out += `+ .config/opencode/skills/${name}/SKILL.md\n`;
-    out += `+ .pi/agent/skills/${name}/SKILL.md\n`;
+    for (const rel of SKILL_TARGET_DIRS) {
+      if (home !== undefined && existsSync(join(home, rel, name, "SKILL.md"))) continue;
+      out += `+ ${rel}/${name}/SKILL.md\n`;
+    }
   }
-  return out;
+  if (out === "") return "";
+  return "=== skills ===\n" + out;
 }
 
 /**
@@ -373,6 +377,41 @@ function installProjectedSkills(source: string, home: string): string | null {
     }
   }
   return null;
+}
+
+/**
+ * Remove do HOME as skills que o apply instalou (SKILL.md idêntico ao da
+ * fonte) — cópias recursivas fora do manifest de revert. Skill alheia
+ * (SKILL.md diferente) e symlink do adaptador pi ficam intactos.
+ */
+function removeProjectedSkills(source: string, home: string): void {
+  for (const name of sourceSkills(source)) {
+    const srcSkill = join(sourceSkillDir(source, name), "SKILL.md");
+    let srcBytes: Buffer;
+    try {
+      srcBytes = readFileSync(srcSkill);
+    } catch {
+      continue;
+    }
+    for (const rel of SKILL_TARGET_DIRS) {
+      const destDir = join(home, rel, name);
+      const destSkill = join(destDir, "SKILL.md");
+      if (!existsSync(destSkill)) continue;
+      let destBytes: Buffer;
+      try {
+        destBytes = readFileSync(destSkill);
+      } catch {
+        continue;
+      }
+      if (!destBytes.equals(srcBytes)) continue; // skill alheia
+      try {
+        if (lstatSync(destDir).isSymbolicLink()) continue; // symlink do adaptador pi
+      } catch {
+        continue;
+      }
+      rmSync(destDir, { recursive: true, force: true });
+    }
+  }
 }
 
 const SOURCE_GATED_HARNESSES = new Set<string>(["pi", "hermes", "tuios"]);
@@ -531,7 +570,12 @@ export function checkForeign(input: {
   }
 
   // Homônima: chave que é do pinga e já existia, sem registro no manifest.
+  // Ponteiros owned sob prefixo de `append` não sofrem checagem de homônima
+  // (§A.4): sob `append` só `+` é aceito, e a entrada fica registrada no
+  // manifest pelo próprio acréscimo (ex.: /hooks/Stop do adapter Claude com
+  // hook alheio preexistente no mesmo evento).
   for (const ownedPtr of owned) {
+    if (isUnderAppend(ownedPtr)) continue;
     if (!pointerExists(input.before, ownedPtr)) continue;
     const registered = input.manifest.entries.some(
       (e) =>
@@ -755,6 +799,7 @@ function rmTarget(abs: string): void {
 async function revertCmd(
   opts: InstallOptions,
   manifestPath: string,
+  source: string,
 ): Promise<number> {
   let manifest: Manifest;
   try {
@@ -820,6 +865,10 @@ async function revertCmd(
     }
   }
 
+  // Skills instaladas pelo apply (fora do manifest): remove as cópias com
+  // SKILL.md idêntico ao da fonte; alheias ficam intactas.
+  removeProjectedSkills(source, home);
+
   writeAtomic(
     manifestPath,
     JSON.stringify({ version: 1, entries: [] }, null, 2) + "\n",
@@ -874,7 +923,7 @@ export async function installCmd(opts: InstallOptions): Promise<number> {
     }
 
     if (opts.mode === "revert") {
-      const rc = await revertCmd(opts, manifestPath);
+      const rc = await revertCmd(opts, manifestPath, source);
       if (rc === 0) {
         try {
           rmSync(join(opts.home, ".config", "systemd", "user", "ginga-supervisor.service"), { force: true });
@@ -1123,7 +1172,7 @@ export async function installCmd(opts: InstallOptions): Promise<number> {
         JSON.stringify({ diff_sha256: diffSha }, null, 2) + "\n",
       );
       if (renderedDiff !== "") process.stdout.write(renderedDiff);
-      const proj = projectSkillsOutput(source);
+      const proj = projectSkillsOutput(source, opts.home);
       if (proj !== "") process.stdout.write(proj);
       return INSTALL_EXIT.ok;
     }
