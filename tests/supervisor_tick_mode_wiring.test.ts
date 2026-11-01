@@ -5,12 +5,12 @@ import { join } from "node:path";
 import { Supervisor, parseSupervisorConfig } from "../src/supervisor.ts";
 
 /**
- * PLAN-0028 TASK-19 (achado grave do judge 2026-11-01 na TASK-07):
+ * PLAN-0028 TASK-20 (achado grave do judge 2026-11-01 na TASK-07):
  * o mode tick tem que estar ligado de ponta a ponta —
- * - `parseSupervisorConfig` lê `[supervisor] mode` (padrão `"tick"` após o e2e TASK-08);
- * - o supervisor chama `childArgv` no spawn em mode tick (`ginga tick --loop --repo <repo>`),
- *   e mantém `lane.command` em mode `operador`;
- * - `ginga tick` aceita `--loop` e `--repo <r>` (hoje sai 2) e filtra a fila por repo.
+ * - `parseSupervisorConfig` lê `[supervisor] mode` (padrão `"tick"` na config, que o
+ *   serve passa ao Supervisor; a classe sem `mode` mantém `"operador"`);
+ * - o supervisor chama `childArgv` no spawn em mode tick (`ginga tick --loop --repo <repo>`);
+ * - `ginga tick` aceita `--loop` e `--repo <r>` (antes saía 2) e filtra a fila por repo.
  */
 
 setDefaultTimeout(20000);
@@ -27,7 +27,7 @@ function fakeChild(code: number) {
   };
 }
 
-describe("TASK-19: parseSupervisorConfig lê [supervisor] mode", () => {
+describe("TASK-20: parseSupervisorConfig lê [supervisor] mode (padrão tick na config)", () => {
   test("padrão tick; operador só quando escrito; valor estranho cai em tick", () => {
     expect(parseSupervisorConfig("").mode).toBe("tick");
     expect(parseSupervisorConfig('[supervisor]\nmode = "tick"\n').mode).toBe("tick");
@@ -36,32 +36,15 @@ describe("TASK-19: parseSupervisorConfig lê [supervisor] mode", () => {
   });
 });
 
-describe("TASK-19: supervisor chama childArgv no spawn", () => {
-  test("mode tick (explícito e padrão) spawna 'ginga tick --loop --repo <repo>'", async () => {
-    const cmds: string[] = [];
+describe("TASK-20: supervisor chama childArgv no spawn", () => {
+  // contador de pendência POR supervisor (o bug da TASK-19 era compartilhar o contador)
+  const mk = (cmds: string[], mode?: "tick" | "operador") => {
     let n = 0;
-    const mk = (mode?: "tick" | "operador") =>
-      new Supervisor([{ repo: "ginga", command: "manda lane ginga" }], {
-        mode,
-        pendingCheck: async () => n++ === 0,
-        sleep: async () => {},
-        spawn: (cmd: string) => {
-          cmds.push(cmd);
-          return fakeChild(0);
-        },
-        emit: () => {},
-      });
-    await mk("tick").run();
-    await mk(undefined).run();
-    expect(cmds).toEqual(["ginga tick --loop --repo ginga", "ginga tick --loop --repo ginga"]);
-  });
-
-  test("mode operador mantém lane.command", async () => {
-    const cmds: string[] = [];
-    let n = 0;
-    const sup = new Supervisor([{ repo: "ginga", command: "manda lane ginga" }], {
-      mode: "operador",
+    let progress = 0;
+    return new Supervisor([{ repo: "ginga", command: "manda lane ginga" }], {
+      mode,
       pendingCheck: async () => n++ === 0,
+      progressCheck: async () => ++progress,
       sleep: async () => {},
       spawn: (cmd: string) => {
         cmds.push(cmd);
@@ -69,12 +52,29 @@ describe("TASK-19: supervisor chama childArgv no spawn", () => {
       },
       emit: () => {},
     });
-    await sup.run();
-    expect(cmds).toEqual(["manda lane ginga"]);
+  };
+
+  test("mode tick spawna 'ginga tick --loop --repo <repo>'", async () => {
+    const cmds: string[] = [];
+    await mk(cmds, "tick").run();
+    expect(cmds).toEqual(["ginga tick --loop --repo ginga"]);
+  });
+
+  test("mode operador e ausencia de mode no construtor usam lane.command", async () => {
+    const cmds: string[] = [];
+    await mk(cmds, "operador").run();
+    await mk(cmds, undefined).run();
+    expect(cmds).toEqual(["manda lane ginga", "manda lane ginga"]);
+  });
+
+  test("serve passa o mode da config: parseSupervisorConfig(\"\").mode leva o supervisor ao tick", async () => {
+    const cmds: string[] = [];
+    await mk(cmds, parseSupervisorConfig("").mode).run();
+    expect(cmds).toEqual(["ginga tick --loop --repo ginga"]);
   });
 });
 
-describe("TASK-19: ginga tick aceita --loop/--repo", () => {
+describe("TASK-20: ginga tick aceita --loop/--repo", () => {
   const tmps: string[] = [];
   afterEach(() => {
     for (const d of tmps.splice(0)) rmSync(d, { recursive: true, force: true });
@@ -83,7 +83,7 @@ describe("TASK-19: ginga tick aceita --loop/--repo", () => {
   const entry = (task: string, state = "open") => ({ task, plan: task.split("/")[0], state, blocked_by: [] as string[] });
 
   function setup(queue: any[]) {
-    const dir = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), "ginga-tickloop-")));
+    const dir = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), "ginga-tickwire-")));
     tmps.push(dir);
     mkdirSync(join(dir, ".ginga"), { recursive: true });
     writeFileSync(join(dir, "queue.json"), JSON.stringify({ tasks: queue }));
@@ -130,7 +130,7 @@ describe("TASK-19: ginga tick aceita --loop/--repo", () => {
     const w = setup([entry("ginga/TASK-01")]);
     const r = w.tick(["--loop", "--repo", "ginga", "--json"]);
     expect(r.exit).toBe(0);
-    // 1ª pasada despacha; a 2ª não tem nada claimável (status dispatched) → sai
+    // 1ª passada despacha; a 2ª não tem nada claimável (status dispatched) → sai
     expect(w.calls()).toEqual(["run ginga --task TASK-01"]);
   });
 
