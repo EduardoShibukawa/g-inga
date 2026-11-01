@@ -72,7 +72,7 @@ async function verbCommand(verb: Verb, tokens: string[]): Promise<number> {
       continue;
     }
     if (t.startsWith("--")) {
-      const name = t.slice(2);
+      const name = t.slice(2).replaceAll("-", "_");
       const value = tokens[i + 1];
       const hasValue = value !== undefined && value !== "" && !value.startsWith("--");
       if (!hasValue) {

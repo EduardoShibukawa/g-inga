@@ -3,11 +3,12 @@
 // arquivos do bundle (frontmatter); a execução vive no state.db.
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fmGet } from "./write";
+import { listLearnings } from "../lessons.ts";
 import type { VerbArgs, VerbCtx } from "./registry";
 
-type Listed = { id: string; kind: "intent" | "spec" | "plan"; status: string; title: string };
+type Listed = { id: string; kind: "intent" | "spec" | "plan"; status: string; title: string; file: string };
 
 const KIND_DIRS = [
   { kind: "intent" as const, subdir: "intents", inDir: false },
@@ -31,6 +32,7 @@ function listBundle(root: string): Listed[] {
         kind,
         status: fmGet(raw, "status") ?? "draft",
         title: fmGet(raw, "title") ?? entry,
+        file, // caminho do arquivo do artefato (interno; status/board não o projetam)
       });
     }
   }
@@ -79,6 +81,14 @@ export function inbox(ctx: VerbCtx): unknown {
   for (const a of listBundle(ctx.root)) {
     if (a.kind === "intent") continue;
     if (a.status === "draft") items.push({ id: a.id, type: "aprovar", entity: a.kind, title: a.title, status: a.status });
+    // PLAN fechado (done) com learnings ainda não promovidos → item "promover?"
+    // (PLAN-0013 TASK-05/TASK-27, achado do judge 2026-11-01).
+    if (a.kind === "plan" && a.status === "done") {
+      const pending = listLearnings(dirname(a.file))
+        .filter((l) => !l.promoted)
+        .map((l) => l.id);
+      if (pending.length > 0) items.push({ id: a.id, type: "promover?", plan: a.id, pending });
+    }
   }
 
   const answered = new Set<string>();

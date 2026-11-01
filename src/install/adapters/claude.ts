@@ -5,6 +5,47 @@ import type { Adapter, AdapterContext, Probe } from "../install";
 export const CLAUDE_MARKETPLACE = "pi-" + "harness-local";
 export const CLAUDE_PLUGIN_KEY = "pi-" + "harness" + "@" + "pi-" + "harness-local";
 
+/** true quando o último apply projetou os hooks de handoff (entra no owned). */
+let handoffHooksProjected = false;
+
+/** Comando dos hooks de handoff projetados no settings.json (Stop + UserPromptSubmit). */
+export const CLAUDE_HANDOFF_HOOK_CMD = "ginga handoff hook --runtime claude";
+export const CLAUDE_HANDOFF_HOOK_EVENTS = ["Stop", "UserPromptSubmit"] as const;
+
+/** Acrescenta (idempotente) as entradas de hook de handoff em `settings.hooks`, sem tocar as alheias. */
+export function ensureHandoffHooks(settings: Record<string, unknown>): void {
+  const raw = settings.hooks;
+  const hooks: Record<string, unknown> =
+    raw !== null && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  for (const ev of CLAUDE_HANDOFF_HOOK_EVENTS) {
+    const cur = hooks[ev];
+    const arr: unknown[] = Array.isArray(cur) ? [...cur] : [];
+    const already = arr.some(
+      (e) =>
+        e !== null &&
+        typeof e === "object" &&
+        Array.isArray((e as Record<string, unknown>).hooks) &&
+        ((e as Record<string, unknown>).hooks as unknown[]).some(
+          (h) =>
+            h !== null &&
+            typeof h === "object" &&
+            (h as Record<string, unknown>).command === CLAUDE_HANDOFF_HOOK_CMD,
+        ),
+    );
+    if (!already) {
+      arr.push({
+        matcher: "",
+        hooks: [{ type: "command", command: CLAUDE_HANDOFF_HOOK_CMD }],
+      });
+    }
+    hooks[ev] = arr;
+  }
+  settings.hooks = hooks;
+}
+
+
 function writeJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(value, null, 2) + "\n");
@@ -86,10 +127,15 @@ export const claudeAdapter: Adapter = {
     const plugin = this.plugin ?? ("pi-" + "harness");
     const market = claudeMarketplace(plugin);
     const key = claudeKey(plugin);
+    const settingsOwned = [`/enabledPlugins/${key}`];
+    if (handoffHooksProjected) {
+      settingsOwned.push("/hooks/Stop");
+      settingsOwned.push("/hooks/UserPromptSubmit");
+    }
     return {
       ".claude/plugins/known_marketplaces.json": [`/${market}`],
       ".claude/plugins/installed_plugins.json": [`/plugins/${key}`],
-      ".claude/settings.json": [`/enabledPlugins/${key}`],
+      ".claude/settings.json": settingsOwned,
     };
   },
 
@@ -106,6 +152,8 @@ export const claudeAdapter: Adapter = {
       ".claude/settings.json": [],
     };
   },
+
+  append: { ".claude/settings.json": ["/hooks"] },
 
   probes: [claudePluginListProbe, claudePluginValidateProbe],
 
@@ -154,6 +202,11 @@ export const claudeAdapter: Adapter = {
     ];
     writeJson(ipPath, ip);
 
+    // 3. Verify handoff artifacts in source
+    const hasHandoffSkills = existsSync(join(ctx.source, "skills", "handoff"));
+    const hasHandoffMod = existsSync(join(ctx.source, "contrib", "claude-mod-handoff"));
+    const sourceHasHandoff = hasHandoffSkills || hasHandoffMod;
+
     // 3. settings.json (ausente -> criado em cima de {})
     const settingsPath = join(shadowHome, ".claude/settings.json");
     const settings = readJsonObject(settingsPath);
@@ -164,7 +217,53 @@ export const claudeAdapter: Adapter = {
         ? {}
         : (settings.enabledPlugins as Record<string, unknown>);
     plugins[key] = true;
+
+    // Project handoff hooks if condition met: ctx.plugin === undefined OR source has artifacts
+    const shouldProjectHooks = ctx.plugin === undefined || sourceHasHandoff;
+    handoffHooksProjected = shouldProjectHooks;
+
+    if (shouldProjectHooks) {
+      ensureHandoffHooks(settings);
+    }
+
+    // Register mod if source has contrib/claude-mod-handoff with plugin.json
+    const modPluginPath = join(ctx.source, "contrib", "claude-mod-handoff", ".claude-plugin", "plugin.json");
+    if (existsSync(modPluginPath)) {
+      const modPlugin = readJsonObject(modPluginPath);
+      const modName = modPlugin.name || "claude-mod-handoff";
+      const modVersion = modPlugin.version || "local";
+      const modKey = `${modName}@${CLAUDE_MARKETPLACE}`;
+
+      // Register in installed_plugins.json
+      if (
+        ip.plugins === null ||
+        typeof ip.plugins !== "object" ||
+        Array.isArray(ip.plugins)
+      ) {
+        ip.plugins = {};
+      }
+      ip.plugins[modKey] = [
+        {
+          scope: "user",
+          installPath: join(ctx.source, "contrib", "claude-mod-handoff"),
+          version: modVersion,
+          installedAt: ctx.now,
+          lastUpdated: ctx.now,
+        },
+      ];
+
+      // Enable in settings.enabledPlugins
+      plugins[modKey] = true;
+    }
+
     settings.enabledPlugins = plugins;
     writeJson(settingsPath, settings);
+
+    // Update lastUpdated timestamps
+    mkt[market].lastUpdated = ctx.now;
+    writeJson(mktPath, mkt);
+
+    ip.plugins[key][0].lastUpdated = ctx.now;
+    writeJson(ipPath, ip);
   },
 };

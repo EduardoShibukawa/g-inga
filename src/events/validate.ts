@@ -60,7 +60,7 @@ const KINDS: Record<string, DataSpec> = {
   handoff: {
     required: ["trigger", "context_tokens", "handoff_tokens"],
     strings: ["trigger", "file"],
-    enums: { trigger: ["boundary", "context", "cache"] },
+    enums: { trigger: ["boundary", "context", "cache", "idle", "manual"] },
     numbers: ["context_tokens", "handoff_tokens", "est_saved_usd"],
   },
   learning: {

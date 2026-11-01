@@ -1,0 +1,2 @@
+{"type":"user","timestamp":"2026-10-30T11:00:00.000Z","message":{"role":"user","content":"oi"}}
+{"type":"assistant","timestamp":"2026-10-30T11:00:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"ola"}]}}
