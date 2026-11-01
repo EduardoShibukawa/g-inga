@@ -1,0 +1,4 @@
+name: guard-segredos
+version: "0.1.0"
+description: "Bloqueia tool calls que leem segredos (pre_tool_call) e redige chaves no resultado (transform_tool_result). Só age em sessão de lane (GINGA_GUARD_LANE)."
+author: "duh-homelab"
