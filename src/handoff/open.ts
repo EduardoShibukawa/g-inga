@@ -23,6 +23,8 @@ export type OpenSessionOpts = {
   model: string;
   cwd: string;
   spawn: Spawn;
+  trigger?: string;
+  depth?: number;
   now?: Date;
 };
 
@@ -42,7 +44,7 @@ function extractPlan(handoffPath: string): string | undefined {
 function emitHandoffEvent(
   handoffPath: string,
   plan: string | undefined,
-  trigger: "cache" | "boundary",
+  trigger: string,
   depth: number,
   runtime: string,
   model: string,
@@ -80,7 +82,14 @@ export async function openSession(
 
   // Outros runtimes: não abrem sozinhos — devolvem o attachCmd a imprimir.
   const attachCmd = buildAttachCmd(runtime, o.handoffPath);
-  emitHandoffEvent(o.handoffPath, plan, "cache", 0, runtime, o.model);
+  emitHandoffEvent(
+    o.handoffPath,
+    plan,
+    o.trigger ?? "manual",
+    o.depth ?? 0,
+    runtime,
+    o.model,
+  );
   return { ok: true, sessionRef: null, attachCmd };
 }
 

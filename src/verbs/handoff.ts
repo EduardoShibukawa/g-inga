@@ -99,6 +99,8 @@ async function run(ctx: VerbCtx, args: VerbArgs): Promise<unknown> {
     model,
     cwd: process.cwd(),
     spawn,
+    trigger: trigger ?? "manual",
+    depth: args.depth !== undefined ? Number(args.depth) : undefined,
   });
 
   return {
