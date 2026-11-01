@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -240,21 +241,65 @@ export function sourceHasPiSkills(source: string): boolean {
   }
 }
 
-/**
- * Projeção de skills: lista onde cada skill de `.pi/skills/` seria
- * instalada (Claude, OpenCode, Pi). Só output em dry-run; não grava nada.
- */
-export function projectSkillsOutput(source: string): string {
-  const skillsDir = join(source, ".pi/skills");
-  if (!existsSync(skillsDir)) return "";
-  let skills: string[];
+const SKILL_SOURCE_DIRS = ["skills", ".pi/skills"] as const;
+const SKILL_TARGET_DIRS = [
+  ".claude/skills",
+  ".config/opencode/skills",
+  ".pi/agent/skills",
+] as const;
+
+/** Nomes das skills existentes em uma das pastas de fonte. */
+function skillNamesIn(source: string, rel: string): string[] {
+  const dir = join(source, rel);
   try {
-    skills = readdirSync(skillsDir)
-      .filter((name) => existsSync(join(skillsDir, name, "SKILL.md")))
+    if (!existsSync(dir)) return [];
+    return readdirSync(dir)
+      .filter((name) => {
+        const skillDir = join(dir, name);
+        try {
+          return (
+            statSync(skillDir).isDirectory() &&
+            existsSync(join(skillDir, "SKILL.md"))
+          );
+        } catch {
+          return false;
+        }
+      })
       .sort();
   } catch {
-    return "";
+    // Uma fonte ilegível apenas não contribui skills para a união.
+    return [];
   }
+}
+
+/**
+ * Nomes das skills da fonte. `skills/` é a fonte canônica do repo ginga;
+ * `.pi/skills/` continua aceito como caminho legado.
+ */
+export function sourceSkills(source: string): string[] {
+  return [
+    ...new Set([
+      ...skillNamesIn(source, "skills"),
+      ...skillNamesIn(source, ".pi/skills"),
+    ]),
+  ].sort();
+}
+
+/** Diretório canônico de uma skill; `skills/` tem precedência sobre o legado. */
+function sourceSkillDir(source: string, name: string): string {
+  for (const rel of SKILL_SOURCE_DIRS) {
+    const dir = join(source, rel, name);
+    if (existsSync(join(dir, "SKILL.md"))) return dir;
+  }
+  return join(source, "skills", name);
+}
+
+/**
+ * Projeção de skills: lista onde cada skill seria instalada (Claude,
+ * OpenCode e Pi). Só output em dry-run; não grava nada.
+ */
+export function projectSkillsOutput(source: string): string {
+  const skills = sourceSkills(source);
   if (skills.length === 0) return "";
   let out = "=== skills ===\n";
   for (const name of skills) {
@@ -263,6 +308,71 @@ export function projectSkillsOutput(source: string): string {
     out += `+ .pi/agent/skills/${name}/SKILL.md\n`;
   }
   return out;
+}
+
+/**
+ * Copia as skills da fonte para os três destinos do HOME real. Uma skill
+ * preexistente com outro `SKILL.md` é alheia: o destino inteiro é pulado.
+ */
+function installProjectedSkills(source: string, home: string): string | null {
+  for (const name of sourceSkills(source)) {
+    const srcDir = sourceSkillDir(source, name);
+    const srcSkill = join(srcDir, "SKILL.md");
+    let srcBytes: Buffer;
+    try {
+      srcBytes = readFileSync(srcSkill);
+    } catch (e) {
+      return `falha ao ler skill ${name} da fonte: ${errorMessage(e)}`;
+    }
+
+    for (const rel of SKILL_TARGET_DIRS) {
+      const destDir = join(home, rel, name);
+      const destSkill = join(destDir, "SKILL.md");
+      if (existsSync(destSkill)) {
+        let destBytes: Buffer;
+        try {
+          destBytes = readFileSync(destSkill);
+        } catch {
+          console.error(
+            `pinga install: skill alheia ignorada em ${destSkill}: SKILL.md ilegível`,
+          );
+          continue;
+        }
+        if (!destBytes.equals(srcBytes)) {
+          console.error(
+            `pinga install: skill alheia ignorada em ${destSkill}: SKILL.md difere da fonte`,
+          );
+          continue;
+        }
+      }
+
+      try {
+        if (existsSync(destDir)) {
+          const destStat = lstatSync(destDir);
+          if (destStat.isSymbolicLink()) {
+            // O adaptador pi já materializa skills como symlink para a fonte.
+            // Com o mesmo SKILL.md, a instalação já está satisfeita.
+            if (existsSync(destSkill)) continue;
+            console.error(
+              `pinga install: skill alheia ignorada em ${destDir}: symlink sem SKILL.md`,
+            );
+            continue;
+          }
+          if (!destStat.isDirectory()) {
+            console.error(
+              `pinga install: skill alheia ignorada em ${destDir}: destino não é diretório`,
+            );
+            continue;
+          }
+        }
+        mkdirSync(destDir, { recursive: true });
+        cpSync(srcDir, destDir, { recursive: true, force: true });
+      } catch (e) {
+        return `falha ao instalar skill ${name} em ${destDir}: ${errorMessage(e)}`;
+      }
+    }
+  }
+  return null;
 }
 
 const SOURCE_GATED_HARNESSES = new Set<string>(["pi", "hermes", "tuios"]);
@@ -1013,10 +1123,8 @@ export async function installCmd(opts: InstallOptions): Promise<number> {
         JSON.stringify({ diff_sha256: diffSha }, null, 2) + "\n",
       );
       if (renderedDiff !== "") process.stdout.write(renderedDiff);
-      if (renderedDiff !== "" && hasPiSkills) {
-        const proj = projectSkillsOutput(source);
-        if (proj !== "") process.stdout.write(proj);
-      }
+      const proj = projectSkillsOutput(source);
+      if (proj !== "") process.stdout.write(proj);
       return INSTALL_EXIT.ok;
     }
 
@@ -1059,6 +1167,11 @@ export async function installCmd(opts: InstallOptions): Promise<number> {
         const link = ensureBinLink(opts.home, opts.env?.PATH);
         if (!link.onPath) console.error("aviso: ~/.local/bin não está no PATH");
       } catch {}
+      const skillError = installProjectedSkills(source, opts.home);
+      if (skillError !== null) {
+        console.error(`pinga install: ${skillError}`);
+        return INSTALL_EXIT.infra;
+      }
       return INSTALL_EXIT.ok;
     }
     if (dirtyFiles.size === 0 && unlinkFiles.size === 0) {
@@ -1145,6 +1258,10 @@ export async function installCmd(opts: InstallOptions): Promise<number> {
           throw infraError(`sombra -> real falhou para ${file}`);
         }
       }
+
+      // As skills são cópias recursivas fora do manifest de revert.
+      const skillError = installProjectedSkills(source, opts.home);
+      if (skillError !== null) throw infraError(skillError);
 
       // 6. Manifest atômico: entradas por ponteiro (owned/append/new) e
       //    sha256_pre/post compartilhados entre harnesses do mesmo arquivo.
