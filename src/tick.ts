@@ -11,7 +11,7 @@
 // A renovação em tempo real precisa do event loop, então src/cli.ts usa este
 // arquivo como worker (sync fachada → `bun src/tick.ts tick …`).
 
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { Database } from "bun:sqlite";
 import { emitEvent } from "./events/emit.ts";
@@ -296,6 +296,37 @@ function getPlanTasksState(db: Database, plan: string) {
   }));
 }
 
+/** Status do frontmatter do PLAN.md do bundle (seed da fase no fluxo de fases). */
+function planFrontmatterStatus(root: string, plan: string): string | null {
+  try {
+    const raw = readFileSync(join(root, ".ginga", "plans", plan, "PLAN.md"), "utf8");
+    return raw.match(/^status:\s*(.+)$/m)?.[1]?.trim() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Veredito mais recente do judge em `.ginga/plans/<plan>/judge/*.json` →
+ * "pass" | "high" (falha grave) | outro veredito | undefined (sem judge).
+ */
+function readJudgeVerdict(root: string, plan: string): string | undefined {
+  try {
+    const dir = join(root, ".ginga", "plans", plan, "judge");
+    const files = readdirSync(dir).filter((f) => f.endsWith(".json")).sort();
+    const last = files[files.length - 1];
+    if (!last) return undefined;
+    const parsed = JSON.parse(readFileSync(join(dir, last), "utf8"));
+    const verdict = parsed?.judge?.verdict;
+    if (verdict === "pass") return "pass";
+    const items = Array.isArray(parsed?.judge?.items) ? parsed.judge.items : [];
+    if (items.some((it: any) => it?.severity === "grave" && it?.ok === false)) return "high";
+    return typeof verdict === "string" ? verdict : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Ponto de entrada do worker: `bun src/tick.ts tick […flags]`. */
 export async function runTick(args: string[]): Promise<number> {
   let dryRun = false;
@@ -339,7 +370,15 @@ export async function runTick(args: string[]): Promise<number> {
     if (db) {
       const plans = [...new Set(queue.map(q => q.plan))];
       for (const plan of plans) {
-        const planPhase = getPhase(db, plan);
+        let planPhase = getPhase(db, plan);
+        if (!planPhase) {
+          // TASK-08 (e2e sem humano): PLAN aprovado no bundle sem linha de fase
+          // entra no fluxo de fases como "approved".
+          if (planFrontmatterStatus(base, plan) === "approved") {
+            setPhase(db, plan, "approved", "seed: PLAN.md approved");
+            planPhase = getPhase(db, plan);
+          }
+        }
         if (!planPhase) continue; // not phase-managed
         // Build tasks state from queue entries for this plan
         const planEntries = queue.filter(q => q.plan === plan);
@@ -369,6 +408,7 @@ export async function runTick(args: string[]): Promise<number> {
           phase: planPhase.phase,
           tasks: tasksState,
           cap_ok: true, // assume ok for now
+          judge: readJudgeVerdict(base, plan),
         });
         if (action.cmd === "none" || action.cmd === "notify") continue;
         // Execute action
@@ -382,15 +422,27 @@ export async function runTick(args: string[]): Promise<number> {
           continue;
         }
         const code = await despachar(command, json, () => {});
+        // red/run avançam a fase no DESPACHO (a tentativa conta mesmo falhando,
+        // para o replan depois de 3 falhas ver attempts no task_exec).
+        if (action.cmd === "red") {
+          setPhase(db, plan, "red", "red");
+        } else if (action.cmd === "run") {
+          setPhase(db, plan, "tasks", "run");
+          if (action.task) {
+            const row = db
+              .query("SELECT attempts FROM task_exec WHERE plan = ? AND task = ?")
+              .get(plan, action.task) as { attempts: number } | undefined;
+            const att = Number(row?.attempts ?? 0) + 1;
+            db.query(
+              "INSERT INTO task_exec(plan, task, status, attempts, lease_owner, lease_until) VALUES(?, ?, ?, ?, NULL, NULL) ON CONFLICT(plan, task) DO UPDATE SET attempts = excluded.attempts, status = excluded.status",
+            ).run(plan, action.task, code === 0 ? "dispatched" : "failed", att);
+          }
+        }
         if (code === 0) {
           despachadas.push(action.task ? `${plan}/${action.task}` : plan);
           if (!json) console.log(`despachado: ${action.task ? `${plan}/${action.task}` : plan}`);
           // Update phase based on action
-          if (action.cmd === "red") {
-            setPhase(db, plan, "red", "red");
-          } else if (action.cmd === "run") {
-            setPhase(db, plan, "tasks", "run");
-          } else if (action.cmd === "judge") {
+          if (action.cmd === "judge") {
             setPhase(db, plan, "judge", "judge");
           } else if (action.cmd === "merge") {
             setPhase(db, plan, "done", "merge");
