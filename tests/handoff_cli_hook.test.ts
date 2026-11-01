@@ -94,8 +94,11 @@ describe("CLI do hook de handoff", () => {
     expect(typeof state.lastHandoffTs).toBe("string");
     expect(state.depth).toBe(0);
 
-    const handoffs = join(fx.dir, "handoffs");
+    // TASK-25/T315: o hook grava em <raiz do bundle>/handoffs, isto é,
+    // fx.dir/.ginga/handoffs (raiz resolvida a partir do cwd do stdin).
+    const handoffs = join(fx.dir, ".ginga", "handoffs");
     expect(existsSync(handoffs)).toBe(true);
+    expect(existsSync(join(fx.dir, "handoffs"))).toBe(false);
     expect(readdirNames(handoffs).some((name) => name.endsWith("-hook.md"))).toBe(false);
     rmSync(handoffs, { recursive: true, force: true });
 
@@ -110,7 +113,11 @@ describe("CLI do hook de handoff", () => {
     const bin = join(fx.dir, "fake-bin");
     mkdirSync(bin, { recursive: true });
     const claude = join(bin, "claude");
-    writeFileSync(claude, "#!/bin/sh\nprintf 'ses_nova_cli\\n'\n");
+    const argvFile = join(bin, "argv.txt");
+    writeFileSync(
+      claude,
+      `#!/bin/sh\nprintf '%s\\n' "$@" > ${JSON.stringify(argvFile)}\nprintf 'ses_nova_cli\\n'\n`,
+    );
     chmodSync(claude, 0o755);
 
     const result = await cli(
@@ -136,6 +143,17 @@ describe("CLI do hook de handoff", () => {
     expect(existsSync(statePath)).toBe(true);
     const state = JSON.parse(readFileSync(statePath, "utf8"));
     expect(state.redirected).toBe(true);
+
+    // TASK-25/T315: o redirect passa o modelo real — nunca `claude --model ""`.
+    const argv = readFileSync(argvFile, "utf8").split("\n").filter((l) => l !== "");
+    const mi = argv.indexOf("--model");
+    expect(mi).toBeGreaterThanOrEqual(0);
+    expect(argv[mi + 1]).toBeTruthy();
+    expect(argv[mi + 1]).not.toBe("");
+
+    // handoff gravado na raiz do bundle, não no cwd
+    expect(existsSync(join(fx.dir, ".ginga", "handoffs"))).toBe(true);
+    expect(existsSync(join(fx.dir, "handoffs"))).toBe(false);
   });
 });
 
