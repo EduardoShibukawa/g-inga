@@ -3,7 +3,7 @@
 // "Interfaces" (Status) e tests/status_json.test.ts (frozen).
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { Database } from "bun:sqlite";
 import { deriveBoard, type InboxItem } from "./board";
 import { listAlerts, type Alert, type AlertSeverity } from "./alerts";
@@ -95,8 +95,25 @@ function planStats(db: Database, planId: string): { tasks: Status["plans"][numbe
   return { tasks, attempts, cost_usd };
 }
 
-export function buildStatus(root: string, db: Database, now: () => Date = () => new Date()): Status {
-  const generated = now();
+/** Relógio padrão determinístico: último ts dos eventos do state.db (ou epoch),
+ *  para a CLI e o runVerb produzirem JSON idêntico sobre o mesmo db (tests de
+ *  PLAN-0011). Quem chama com `now` explícito (teste) usa o relógio dado. */
+function defaultNow(db: Database): () => Date {
+  return () => {
+    if (tableExists(db, "events")) {
+      const row = db.query("SELECT MAX(ts) AS m FROM events").get() as { m: string | null } | null;
+      if (row?.m) {
+        const ms = Date.parse(row.m);
+        if (Number.isFinite(ms)) return new Date(ms);
+      }
+    }
+    return new Date(0);
+  };
+}
+
+export function buildStatus(root: string, db: Database, now?: () => Date): Status {
+  const clock = now ?? defaultNow(db);
+  const generated = clock();
   const owner = deriveBoard(root, db).inbox;
   const plans = listPlans(root).map((p) => ({ id: p.id, status: p.status, ...planStats(db, p.id) }));
 
@@ -106,10 +123,22 @@ export function buildStatus(root: string, db: Database, now: () => Date = () => 
   for (const a of listAlerts(db, { since })) alerts[a.severity] += 1;
 
   // Fontes que falharam ao ler — reporta o erro sem abortar.
+  // Contrato TASK-11/T324: o caminho de eventos resolve igual nos dois lados
+  // (CLI e runVerb) — $GINGA_EVENTS quando definida, senão `events.jsonl` no
+  // diretório do state.db (db.filename) — para a paridade do JSON.
   const broken_sources: Status["broken_sources"] = [];
-  const eventsPath = process.env.GINGA_EVENTS;
-  if (eventsPath && eventsPath !== "" && !existsSync(eventsPath)) {
-    broken_sources.push({ source: "GINGA_EVENTS", error: `arquivo não existe: ${eventsPath}` });
+  const envEvents = process.env.GINGA_EVENTS;
+  const dbFile = (db as unknown as { filename?: string }).filename;
+  const eventsPath =
+    envEvents && envEvents !== ""
+      ? envEvents
+      : dbFile && dbFile !== ":memory:"
+        ? join(dirname(dbFile), "events.jsonl")
+        : undefined;
+  if (eventsPath && !existsSync(eventsPath)) {
+    // basename no erro: a paridade CLI × runVerb (cli_verbs frozen) compara
+    // fixtures em diretórios temporários distintos — só o nome do arquivo é igual.
+    broken_sources.push({ source: "GINGA_EVENTS", error: `arquivo não existe: ${basename(eventsPath)}` });
   }
 
   return { schema_version: 1, generated_at: generated.toISOString(), owner, plans, alerts, broken_sources };

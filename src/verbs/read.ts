@@ -57,7 +57,12 @@ function blockerData(row: Record<string, any>): Record<string, any> {
 /** status: visão por artefato (intents/specs/plans com seu status). */
 export function status(ctx: VerbCtx): unknown {
   // PLAN-0012 TASK-10/T323: estado do harness via modelo do quadro + state.db.
-  return buildStatus(ctx.root, ctx.db);
+  // `intents`/`specs` ficam por compatibilidade com a API/CLI de PLAN-0011
+  // (tests/api.test.ts e tests/cli_verbs.test.ts, congelados na main).
+  const all = listBundle(ctx.root);
+  const group = (kind: Listed["kind"]) =>
+    all.filter((a) => a.kind === kind).map(({ id, status: s, title }) => ({ id, status: s, title }));
+  return { ...buildStatus(ctx.root, ctx.db), intents: group("intent"), specs: group("spec") };
 }
 
 /** board: colunas por status (o quadro da Roda), usando modelo único. */
