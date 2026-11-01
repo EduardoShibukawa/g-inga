@@ -10,6 +10,8 @@ import * as ops from "./ops.ts";
 import * as read from "./read";
 import * as triageVerb from "./triage";
 import * as write from "./write";
+import { HANDOFF_HOOK_VERB, HANDOFF_VERBS } from "./handoff";
+import { LEARNING_VERBS } from "./learning";
 
 export type VerbCtx = { by: string; via: string; root: string; db: Database };
 /** `bool` marca argumento flag (`--yes`): a CLI aceita sem valor (T127). */
@@ -20,6 +22,12 @@ export type Verb = { name: string; args: VerbArg[]; write: boolean; run(ctx: Ver
 function arg(name: string, required = false): VerbArg {
   return required ? { name, required: true } : { name };
 }
+
+/**
+ * O hook é um comando interno de duas palavras: precisa ser despachado pela
+ * CLI, mas não é parte da enumeração pública `VERBS` (e do contrato de cobertura).
+ */
+const HIDDEN_VERBS: Verb[] = [HANDOFF_HOOK_VERB];
 
 export const VERBS: Verb[] = [
   { name: "init", args: [{ name: "yes", bool: true }], write: true, run: initVerb.run },
@@ -51,10 +59,12 @@ export const VERBS: Verb[] = [
   { name: "verify", args: ops.passthrough(true), write: true, run: ops.verify },
   { name: "maestro", args: ops.passthrough(true), write: true, run: ops.maestro },
   { name: "gira", args: ops.passthrough(true), write: true, run: ops.gira },
+  ...HANDOFF_VERBS,
+  ...LEARNING_VERBS,
 ];
 
 export function getVerb(name: string): Verb | undefined {
-  return VERBS.find((v) => v.name === name);
+  return VERBS.find((v) => v.name === name) ?? HIDDEN_VERBS.find((v) => v.name === name);
 }
 
 export async function runVerb(name: string, ctx: VerbCtx, args: VerbArgs): Promise<unknown> {

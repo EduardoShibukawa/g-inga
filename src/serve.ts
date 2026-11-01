@@ -350,6 +350,7 @@ export async function runServe(args: string[]): Promise<number> {
   if (supCfg.lanes.length > 0) {
     const sup = new Supervisor(supCfg.lanes, {
       root: base,
+      mode: supCfg.mode,
       backoffBaseMs: supCfg.backoffBaseMs,
       backoffMaxMs: supCfg.backoffMaxMs,
       maxRestarts: supCfg.maxRestarts,

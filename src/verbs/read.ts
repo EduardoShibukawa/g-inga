@@ -6,9 +6,10 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { deriveBoard } from "../board";
 import { fmGet } from "./write";
+import { listLearnings } from "../lessons.ts";
 import type { VerbArgs, VerbCtx } from "./registry";
 
-type Listed = { id: string; kind: "intent" | "spec" | "plan"; status: string; title: string };
+type Listed = { id: string; kind: "intent" | "spec" | "plan"; status: string; title: string; file: string };
 
 const KIND_DIRS = [
   { kind: "intent" as const, subdir: "intents", inDir: false },
@@ -32,6 +33,7 @@ function listBundle(root: string): Listed[] {
         kind,
         status: fmGet(raw, "status") ?? "draft",
         title: fmGet(raw, "title") ?? entry,
+        file, // caminho do arquivo do artefato (interno; status/board não o projetam)
       });
     }
   }
@@ -74,8 +76,6 @@ function tableExists(ctx: VerbCtx, name: string): boolean {
 export function inbox(ctx: VerbCtx): unknown {
   const b = deriveBoard(ctx.root, ctx.db);
   const items = b.inbox as Array<Record<string, unknown>>;
-  // Para compatibilidade com testes antigos que esperam {items: [...]}
-  // mas o modelo novo tem shape específico; manter ambos formatos se necessário
   return { items };
 }
 

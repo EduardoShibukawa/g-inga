@@ -1,0 +1,2 @@
+{"type":"user","timestamp":"2026-10-30T11:59:00.000Z","message":{"role":"user","content":"continua"}}
+{"type":"assistant","timestamp":"2026-10-30T11:59:30.000Z","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]},"usage":{"input_tokens":20000,"cache_read_input_tokens":90000,"cache_creation_input_tokens":10000}}

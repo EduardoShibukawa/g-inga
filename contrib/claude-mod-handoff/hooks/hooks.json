@@ -1,0 +1,22 @@
+{
+  "hooks": [
+    {
+      "event": "Stop",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "ginga handoff hook --runtime claude"
+        }
+      ]
+    },
+    {
+      "event": "UserPromptSubmit",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "ginga handoff hook --runtime claude"
+        }
+      ]
+    }
+  ]
+}
