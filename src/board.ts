@@ -1,9 +1,10 @@
 // board.ts - modelo único do quadro e do Inbox (PLAN-0012 TASK-01)
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Database } from "bun:sqlite";
 import { fmGet } from "./verbs/write";
+import { listLearnings } from "./lessons";
 
 export type Card = {
   id: string;
@@ -20,7 +21,7 @@ export type Column = "INTENT" | "SPEC" | "PLAN" | "EXECUTANDO" | "VERIFICANDO" |
 
 export type InboxItem = {
   id: string;
-  type: "blocker" | "aprovar" | "budget" | "decidir" | "promover" | "alerta";
+  type: "blocker" | "aprovar" | "budget" | "decidir" | "promover" | "promover?" | "alerta";
   entity?: string;
   title?: string;
   severity?: "info" | "warn" | "high" | "critical";
@@ -30,6 +31,7 @@ export type InboxItem = {
   plan?: string | null;
   task?: string | null;
   status?: string;
+  pending?: string[];
 };
 
 export type Board = {
@@ -351,7 +353,17 @@ export function deriveBoard(root: string, db: Database): Board {
     }
   }
 
-  // Learnings a promover.
+  // Learnings a promover: PLAN fechado (done) com LEARNINGS.md ainda não promovidos
+  // vira item "promover?" com a lista de pendentes (PLAN-0013 TASK-05/TASK-27, AC do judge).
+  for (const plan of plans) {
+    if (plan.status !== "done" || !plan.dir) continue;
+    const pending = listLearnings(plan.dir).filter((l) => !l.promoted).map((l) => l.id);
+    if (pending.length > 0) {
+      inbox.push({ id: plan.id, type: "promover?", entity: plan.id, title: plan.title, plan: plan.id, pending, actions: ["promote"] });
+    }
+  }
+
+  // Learnings a promover (eventos learning não promovidos).
   try {
     for (const row of db.query("SELECT id, plan, task, json FROM events WHERE kind = 'learning' ORDER BY ts").all() as Array<Record<string, any>>) {
       const data = eventData(row);
