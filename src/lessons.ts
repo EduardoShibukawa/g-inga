@@ -133,7 +133,10 @@ export function findLessons(root: string, filePaths: string[], repo?: string): (
     const content = readSafe(join(lessonsDir, lessonFile));
     const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
     if (!fmMatch) continue;
-    const fm = Bun.YAML.parse(fmMatch[1]) as { scope?: { repo: string; files: string[]; symbols: string[]; tags: string[] } };
+    const fm = Bun.YAML.parse(fmMatch[1]) as {
+      title?: string;
+      scope?: { repo: string; files: string[]; symbols: string[]; tags: string[] };
+    };
     const lessonScope = fm.scope;
 
     // Filtro de repo
@@ -157,13 +160,13 @@ export function findLessons(root: string, filePaths: string[], repo?: string): (
           const whyMatch = content.match(/evidence:\s*(.+)/i);
           const why = whyMatch ? whyMatch[1].trim() : "match por scope.files";
           const lessonIdMatch = lessonFile.match(/^LESSON-\d+/);
-  const lessonId = lessonIdMatch ? lessonIdMatch[0] : lessonFile.replace(/\.md$/, "");
-  result.push({
-    id: lessonId,
-    title: "",
-    path: join("knowledge", "lessons", lessonFile),
-    why,
-  });
+          const lessonId = lessonIdMatch ? lessonIdMatch[0] : lessonFile.replace(/\.md$/, "");
+          result.push({
+            id: lessonId,
+            title: typeof fm.title === "string" ? fm.title : "",
+            path: join("knowledge", "lessons", lessonFile),
+            why,
+          });
           break; // só precisa de um match por learning (para esse pattern)
         }
       }

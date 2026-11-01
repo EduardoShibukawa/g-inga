@@ -40,18 +40,18 @@ function lessonsFind(ctx: VerbCtx, args: VerbArgs): unknown {
   const repo = args.repo ?? "";
 
   const root = ctx.root;
-  const matched = findLessons(root, [touch], repo);
+  const paths = touch.split(",").map((path) => path.trim()).filter(Boolean);
+  const matched = findLessons(root, paths, repo);
 
   if (matched.length === 0) return { lessons: [], skip: true };
 
-  const lesson = matched[0];
   return {
-    lessons: [{
+    lessons: matched.map((lesson) => ({
       id: lesson.id,
-      title: "",
+      title: lesson.title,
       path: lesson.path,
       why: lesson.why,
-    }],
+    })),
   };
 }
 
