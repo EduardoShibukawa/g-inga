@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { guardCall, guardResult } from "./run";
+import { sweep } from "./sweep";
 
 const readStdin = async (): Promise<string> => await new Response(Bun.stdin.stream()).text();
 
@@ -32,7 +33,19 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  console.error("uso: cli.ts check|redact (stdin)");
+  if (verb === "sweep") {
+    const directory = process.argv[3];
+    if (!directory) {
+      console.error("uso: cli.ts check|redact (stdin) | sweep <dir>");
+      return 64;
+    }
+    const result = sweep(directory);
+    for (const hit of result.hits) console.log(`${hit.file}:${hit.line} ${hit.rule}`);
+    console.log(`varridos ${result.files} arquivos, ${result.hits.length} ocorrência(s)`);
+    return result.hits.length > 0 ? 3 : 0;
+  }
+
+  console.error("uso: cli.ts check|redact (stdin) | sweep <dir>");
   return 64;
 }
 
