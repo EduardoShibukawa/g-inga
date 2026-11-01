@@ -17,7 +17,7 @@ export type Lesson = {
   evidence: string;
 };
 
-type LearningEntry = {
+export type LearningEntry = {
   id: string; // L-02
   status: string;
   promoted: boolean;
@@ -102,6 +102,11 @@ function parseLearnings(text: string): LearningEntry[] {
     else cur.scope = value;
   }
   return entries;
+}
+
+/** Learnings do LEARNINGS.md do diretório do PLAN (vazio se não houver arquivo). */
+export function listLearnings(planDir: string): LearningEntry[] {
+  return parseLearnings(readSafe(join(planDir, "LEARNINGS.md")));
 }
 
 /** Busca lições pelo prefixo/glob de scope.files e filtro de repo.
