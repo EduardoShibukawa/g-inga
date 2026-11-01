@@ -9,6 +9,7 @@ export type HandoffCfg = {
   cooldown_min: number;    // minutos de cooldown após um handoff
   max_chain: number;       // depth máximo antes de recusar
   summary: boolean;        // inclui resumo no handoff
+  model?: string;          // modelo usado na abertura da sessão seguinte
 };
 
 export type HandoffState = {
@@ -40,6 +41,7 @@ const DEFAULTS: HandoffCfg = {
 const VALID_MODES = new Set(["off", "suggest", "auto"]);
 const NUM_FIELDS = ["idle_min", "context_tokens", "min_context_tokens", "cooldown_min", "max_chain"] as const;
 const BOOL_FIELDS = ["summary"] as const;
+const STRING_FIELDS = ["model"] as const;
 
 function applyFields(cfg: HandoffCfg, src: Record<string, unknown> | undefined) {
   if (!src) return;
@@ -51,6 +53,11 @@ function applyFields(cfg: HandoffCfg, src: Record<string, unknown> | undefined) 
   }
   for (const k of BOOL_FIELDS) {
     if (typeof src[k] === "boolean") (cfg as any)[k] = src[k];
+  }
+  for (const k of STRING_FIELDS) {
+    if (typeof src[k] === "string" && src[k].trim() !== "") {
+      (cfg as any)[k] = src[k].trim();
+    }
   }
 }
 

@@ -1,8 +1,8 @@
 // Hook de handoff automático (doc 11 §3): lê o JSON do runtime no stdin,
 // roda decideHandoff, grava o handoff em prepare/redirect e responde no
 // formato do Claude (`decision: block`) e do Codex.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { parseHandoffCfg, decideHandoff, type HandoffCfg, type HandoffState } from "./policy.ts";
 import { transcriptUsage } from "./transcript_usage.ts";
 import { openSession } from "./open.ts";
@@ -10,6 +10,7 @@ import { buildHandoff } from "../handoff.ts";
 
 export type HookDeps = {
   now: Date;
+  root?: string;
   open?: (
     handoffPath: string,
     opts: { userPrompt: string; model: string },
@@ -52,8 +53,22 @@ function parseSimpleToml(raw: string): Record<string, unknown> {
   return result;
 }
 
-function parseConfig(cwd: string, runtime: string): HandoffCfg {
-  const tomlPath = join(cwd, ".ginga", "project.toml");
+/** Resolve o diretório `.ginga` subindo a partir do cwd informado no hook. */
+export function resolveBundleRoot(cwd: string): string {
+  const start = resolve(cwd);
+  let current = start;
+  while (true) {
+    const candidate = join(current, ".ginga");
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return join(start, ".ginga");
+}
+
+function parseConfig(root: string, runtime: string): HandoffCfg {
+  const tomlPath = join(root, "project.toml");
   if (!existsSync(tomlPath)) return parseHandoffCfg({}, runtime);
   const raw = readFileSync(tomlPath, "utf8");
   return parseHandoffCfg(parseSimpleToml(raw), runtime);
@@ -86,8 +101,8 @@ function spawnRuntime(cmd: string[], args: string[], opts: { cwd: string }): { s
   }
 }
 
-function loadState(cwd: string, sessionId: string): any {
-  const p = join(cwd, ".ginga", "state", `handoff-${sessionId}.json`);
+function loadState(root: string, sessionId: string): any {
+  const p = join(root, "state", `handoff-${sessionId}.json`);
   if (!existsSync(p)) return {};
   try {
     return JSON.parse(readFileSync(p, "utf8"));
@@ -96,10 +111,28 @@ function loadState(cwd: string, sessionId: string): any {
   }
 }
 
-function saveState(cwd: string, sessionId: string, state: any): void {
-  const dir = join(cwd, ".ginga", "state");
+function saveState(root: string, sessionId: string, state: any): void {
+  const dir = join(root, "state");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `handoff-${sessionId}.json`), JSON.stringify(state, null, 2), "utf8");
+}
+
+/**
+ * Grava sempre no path canônico devolvido por buildHandoff. A API direta
+ * antiga (sem deps.root) mantém `<cwd>/handoffs` como alias do diretório
+ * `.ginga/handoffs` quando o cwd já é o diretório pai do bundle.
+ */
+function writeHandoff(path: string, markdown: string, legacyAlias?: string): void {
+  const dir = dirname(path);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(path, markdown, "utf8");
+  if (legacyAlias && !existsSync(legacyAlias)) {
+    try {
+      symlinkSync(dir, legacyAlias, "dir");
+    } catch {
+      // O alias legado não pode impedir a gravação canônica.
+    }
+  }
 }
 
 /** Hook entrada: runtime, stdin JSON (do Claude/Codex), deps injetáveis. */
@@ -128,9 +161,16 @@ export async function runHook(runtime: string, stdin: string, deps: HookDeps): P
   // sessão não interativa (sem transcript_path) → none
   if (!transcript_path) return {};
 
-  const cfg = parseConfig(cwd, runtime);
+  const hasExplicitRoot = deps.root !== undefined;
+  const root = deps.root && existsSync(deps.root)
+    ? resolve(deps.root)
+    : resolveBundleRoot(cwd);
+  const legacyAlias = !hasExplicitRoot && existsSync(join(resolve(cwd), ".ginga"))
+    ? join(resolve(cwd), "handoffs")
+    : undefined;
+  const cfg = parseConfig(root, runtime);
   const usage = transcriptUsage(transcript_path);
-  const state = loadState(cwd, session_id);
+  const state = loadState(root, session_id);
 
   // 1 redirect por sessão
   if (state.redirected) return {};
@@ -153,7 +193,7 @@ export async function runHook(runtime: string, stdin: string, deps: HookDeps): P
 
   if (decision.action === "prepare") {
     // grava o handoff e sai sem bloquear
-    const { markdown, path } = buildHandoff(cwd, {
+    const { markdown, path } = buildHandoff(root, {
       now,
       git: gitSafe,
       trigger: decision.trigger ?? "context",
@@ -161,10 +201,8 @@ export async function runHook(runtime: string, stdin: string, deps: HookDeps): P
       from_session: session_id,
       depth: state.depth ?? 0,
     });
-    const dir = join(cwd, "handoffs");
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(path, markdown, "utf8");
-    saveState(cwd, session_id, {
+    writeHandoff(path, markdown, legacyAlias);
+    saveState(root, session_id, {
       ...state,
       lastHandoffTs: now.toISOString(),
       depth: state.depth ?? 0,
@@ -175,7 +213,7 @@ export async function runHook(runtime: string, stdin: string, deps: HookDeps): P
 
   if (decision.action === "redirect") {
     // grava o handoff e abre sessão nova
-    const { markdown, path } = buildHandoff(cwd, {
+    const { markdown, path } = buildHandoff(root, {
       now,
       git: gitSafe,
       trigger: decision.trigger ?? "idle",
@@ -183,9 +221,7 @@ export async function runHook(runtime: string, stdin: string, deps: HookDeps): P
       from_session: session_id,
       depth: state.depth ?? 0,
     });
-    const dir = join(cwd, "handoffs");
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(path, markdown, "utf8");
+    writeHandoff(path, markdown, legacyAlias);
 
     const open = deps.open ?? (async (handoffPath: string, opts: { userPrompt: string; model: string }) => {
       const opened = await openSession(runtime, {
@@ -198,13 +234,14 @@ export async function runHook(runtime: string, stdin: string, deps: HookDeps): P
       });
       return { sessionRef: opened.sessionRef, attachCmd: opened.attachCmd };
     });
-    const opened = await open(path, { userPrompt: prompt ?? "", model: "" });
+    const model = (cfg.model ?? process.env.GINGA_MODEL ?? "sonnet").trim() || "sonnet";
+    const opened = await open(path, { userPrompt: prompt ?? "", model });
     const sessionRef = opened.sessionRef;
     const ref = sessionRef ?? path;
     const attachCmd = opened.attachCmd ?? `claude attach ${ref}`;
 
     // persiste estado: 1 redirect por sessão
-    saveState(cwd, session_id, {
+    saveState(root, session_id, {
       redirected: true,
       lastHandoffTs: now.toISOString(),
       depth: (state.depth ?? 0) + 1,

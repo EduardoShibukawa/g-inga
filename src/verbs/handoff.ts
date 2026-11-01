@@ -17,10 +17,10 @@ function gitReal(args: string[], cwd: string): string {
   }
 }
 
-async function runHookVerb(_ctx: VerbCtx, args: VerbArgs): Promise<unknown> {
+async function runHookVerb(ctx: VerbCtx, args: VerbArgs): Promise<unknown> {
   const runtime = (args.runtime ?? "claude").trim() || "claude";
   const stdin = await Bun.stdin.text();
-  return runHook(runtime, stdin, { now: new Date() });
+  return runHook(runtime, stdin, { now: new Date(), root: ctx.root });
 }
 
 async function run(ctx: VerbCtx, args: VerbArgs): Promise<unknown> {
