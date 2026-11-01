@@ -1,158 +1,118 @@
-import { existsSync, readFileSync } from "node:fs";
+// status.ts — ginga status --json (PLAN-0012 TASK-10/T323): estado do harness a
+// partir do bundle + state.db, sem LLM e sem gravar nada. Contrato: PLAN.md
+// "Interfaces" (Status) e tests/status_json.test.ts (frozen).
+
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { Database } from "bun:sqlite";
-import { listAlerts } from "./alerts";
+import type { Database } from "bun:sqlite";
+import { deriveBoard, type InboxItem } from "./board";
+import { listAlerts, type Alert, type AlertSeverity } from "./alerts";
 
 export type Status = {
-  schema_version: number;
-  owner: Array<{ id: string; role?: string }>;
+  schema_version: 1;
+  generated_at: string;
+  owner: InboxItem[];
   plans: Array<{
     id: string;
-    title?: string;
-    status?: string;
-    tasks: { total: number; pass: number; open: number; running?: number };
+    status: string;
+    tasks: { total: number; pass: number; open: number };
     attempts: number;
     cost_usd: number;
   }>;
-  alerts: { critical: number; warn: number; info?: number };
-  broken_sources: Array<{ source: string; reason: string }>;
+  alerts: Record<AlertSeverity, number>;
+  broken_sources: Array<{ source: string; error: string }>;
 };
+
+function record(value: unknown): Record<string, unknown> {
+  if (typeof value === "string") {
+    try {
+      return record(JSON.parse(value));
+    } catch {
+      return {};
+    }
+  }
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function fmGet(raw: string, key: string): string | undefined {
+  const m = new RegExp(`^${key}:\\s*(.+)$`, "m").exec(raw);
+  return m ? m[1].trim().replace(/^["']|["']$/g, "") : undefined;
+}
+
+/** PLANs do bundle (root/plans/PLAN-NNNN-slug/PLAN.md), sem os superseded. */
+function listPlans(root: string): Array<{ id: string; status: string }> {
+  const plansDir = join(root, "plans");
+  const out: Array<{ id: string; status: string }> = [];
+  if (!existsSync(plansDir)) return out;
+  for (const entry of readdirSync(plansDir).sort()) {
+    const m = /^PLAN-\d{4}/.exec(entry);
+    if (!m) continue;
+    // Mesma convenção do listBundle (src/board.ts): PLAN-NNNN-slug/PLAN.md.
+    const file = join(plansDir, entry, "PLAN.md");
+    if (!existsSync(file)) continue;
+    const raw = readFileSync(file, "utf8");
+    const status = fmGet(raw, "status") ?? "draft";
+    if (status === "superseded") continue;
+    out.push({ id: m[0], status });
+  }
+  return out;
+}
 
 function tableExists(db: Database, name: string): boolean {
   try {
-    const row = db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
-    return row !== null;
+    return db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== null;
   } catch {
     return false;
   }
 }
 
-function getOwner(root: string): Array<{ id: string; role?: string }> {
-  // Try to read from common locations
-  const candidates = [
-    join(root, ".ginga", "owner.json"),
-    join(root, "owner.json"),
-  ];
-  for (const c of candidates) {
-    if (existsSync(c)) {
-      try {
-        const raw = readFileSync(c, "utf8");
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) return parsed;
-        if (parsed && Array.isArray((parsed as any).owner)) return (parsed as any).owner;
-      } catch {}
+/** tasks do task_exec + attempts/custo dos eventos `attempt` do PLAN. */
+function planStats(db: Database, planId: string): { tasks: Status["plans"][number]["tasks"]; attempts: number; cost_usd: number } {
+  const tasks = { total: 0, pass: 0, open: 0 };
+  let attempts = 0;
+  let cost_usd = 0;
+  if (tableExists(db, "task_exec")) {
+    const rows = db
+      .query("SELECT status FROM task_exec WHERE plan = ?")
+      .all(planId) as Array<{ status: string | null }>;
+    tasks.total = rows.length;
+    for (const row of rows) {
+      if (String(row.status ?? "").toLowerCase() === "pass") tasks.pass += 1;
+      else tasks.open += 1;
     }
   }
-  // Default owner if not found
-  return [{ id: "owner", role: "owner" }];
-}
-
-function listPlans(root: string): Array<{ id: string; title?: string; status?: string }> {
-  const plansDir = join(root, ".ginga", "plans");
-  const out: Array<{ id: string; title?: string; status?: string }> = [];
-  if (existsSync(plansDir)) {
-    try {
-      const { readdirSync } = require("node:fs");
-      for (const entry of readdirSync(plansDir).sort()) {
-        const m = /^(PLAN-\d{4}(?:-[^\s.]+)?)/.exec(entry);
-        if (!m) continue;
-        const file = join(plansDir, entry);
-        if (!existsSync(file)) continue;
-        const raw = readFileSync(file, "utf8");
-        // simple frontmatter parse
-        const titleMatch = raw.match(/^title:\s*(.+)$/m);
-        const statusMatch = raw.match(/^status:\s*(.+)$/m);
-        out.push({
-          id: m[1],
-          title: titleMatch ? titleMatch[1].trim() : entry,
-          status: statusMatch ? statusMatch[1].trim() : undefined,
-        });
-      }
-    } catch {}
-  }
-  return out;
-}
-
-export function buildStatus(root: string, dbPath: string, now: () => Date = () => new Date()): Status {
-  const db = new Database(dbPath);
-  try {
-    const alerts = listAlerts(db, root);
-    const owner = getOwner(root);
-    const plans = listPlans(root);
-    
-    // Check broken sources - if GINGA_EVENTS points to non-existent file
-    const broken_sources: Array<{ source: string; reason: string }> = [];
-    const eventsPath = process.env.GINGA_EVENTS;
-    if (eventsPath && !existsSync(eventsPath)) {
-      broken_sources.push({ source: eventsPath, reason: "not_found" });
+  if (tableExists(db, "events")) {
+    const rows = db
+      .query("SELECT json FROM events WHERE kind = 'attempt' AND plan = ?")
+      .all(planId) as Array<{ json: string }>;
+    attempts = rows.length;
+    for (const row of rows) {
+      const data = record(record(row.json).data);
+      const c = Number(data.cost_usd);
+      if (Number.isFinite(c)) cost_usd += c;
     }
-    
-    // Aggregate plan stats
-    const resultPlans = plans.map((plan) => {
-      let total = 0;
-      let pass = 0;
-      let open = 0;
-      let attempts = 0;
-      let cost_usd = 0;
-      
-      if (tableExists(db, "task_exec")) {
-        try {
-          // Try different schemas
-          const hasPlanId = (() => {
-            try {
-              const info = db.query("PRAGMA table_info(task_exec)").all() as Array<any>;
-              return info.some((col) => col.name === "plan_id");
-            } catch {
-              return false;
-            }
-          })();
-          
-          if (hasPlanId) {
-            const rows = db.query("SELECT status, attempts, cost_usd FROM task_exec WHERE plan_id = ?").all(plan.id) as Array<any>;
-            total = rows.length;
-            for (const row of rows) {
-              const status = String(row.status || "").toLowerCase();
-              if (status === "pass") pass++;
-              else open++;
-              attempts += Number(row.attempts || 0);
-              cost_usd += Number(row.cost_usd || 0);
-            }
-          } else {
-            // Try composite key schema (plan, task)
-            const rows = db.query("SELECT status, attempts FROM task_exec WHERE plan = ?").all(plan.id) as Array<any>;
-            total = rows.length;
-            for (const row of rows) {
-              const status = String(row.status || "").toLowerCase();
-              if (status === "pass") pass++;
-              else open++;
-              attempts += Number(row.attempts || 0);
-            }
-            // cost might be stored elsewhere, default to 0
-            cost_usd = 0;
-          }
-        } catch (e) {
-          // ignore
-        }
-      }
-      
-      return {
-        id: plan.id,
-        title: plan.title,
-        status: plan.status,
-        tasks: { total, pass, open },
-        attempts,
-        cost_usd,
-      };
-    });
-    
-    return {
-      schema_version: 1,
-      owner,
-      plans: resultPlans,
-      alerts: { critical: alerts.critical || 0, warn: alerts.warn || 0, info: alerts.info || 0 },
-      broken_sources,
-    };
-  } finally {
-    db.close();
   }
+  return { tasks, attempts, cost_usd };
 }
+
+export function buildStatus(root: string, db: Database, now: () => Date = () => new Date()): Status {
+  const generated = now();
+  const owner = deriveBoard(root, db).inbox;
+  const plans = listPlans(root).map((p) => ({ id: p.id, status: p.status, ...planStats(db, p.id) }));
+
+  // Alertas das últimas 24 h, por severidade.
+  const since = new Date(generated.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const alerts: Record<AlertSeverity, number> = { info: 0, warn: 0, high: 0, critical: 0 };
+  for (const a of listAlerts(db, { since })) alerts[a.severity] += 1;
+
+  // Fontes que falharam ao ler — reporta o erro sem abortar.
+  const broken_sources: Status["broken_sources"] = [];
+  const eventsPath = process.env.GINGA_EVENTS;
+  if (eventsPath && eventsPath !== "" && !existsSync(eventsPath)) {
+    broken_sources.push({ source: "GINGA_EVENTS", error: `arquivo não existe: ${eventsPath}` });
+  }
+
+  return { schema_version: 1, generated_at: generated.toISOString(), owner, plans, alerts, broken_sources };
+}
+
+export type { Alert };

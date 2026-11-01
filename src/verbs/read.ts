@@ -5,8 +5,8 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { deriveBoard } from "../board";
+import { buildStatus } from "../status";
 import { fmGet } from "./write";
-import { listLearnings } from "../lessons.ts";
 import type { VerbArgs, VerbCtx } from "./registry";
 
 type Listed = { id: string; kind: "intent" | "spec" | "plan"; status: string; title: string; file: string };
@@ -56,10 +56,8 @@ function blockerData(row: Record<string, any>): Record<string, any> {
 
 /** status: visão por artefato (intents/specs/plans com seu status). */
 export function status(ctx: VerbCtx): unknown {
-  const all = listBundle(ctx.root);
-  const group = (kind: Listed["kind"]) =>
-    all.filter((a) => a.kind === kind).map(({ id, status: s, title }) => ({ id, status: s, title }));
-  return { intents: group("intent"), specs: group("spec"), plans: group("plan") };
+  // PLAN-0012 TASK-10/T323: estado do harness via modelo do quadro + state.db.
+  return buildStatus(ctx.root, ctx.db);
 }
 
 /** board: colunas por status (o quadro da Roda), usando modelo único. */
