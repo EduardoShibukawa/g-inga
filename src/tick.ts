@@ -187,12 +187,18 @@ function emitTransition(exec: Exec): void {
 }
 
 /** Roda o comando de dispatch no shell, renovando o lease até o fim. */
-async function despachar(command: string, json: boolean, renew: () => void): Promise<number> {
+async function despachar(
+  command: string,
+  json: boolean,
+  renew: () => void,
+  onChild?: (child: any | null) => void,
+): Promise<number> {
   const child = Bun.spawn(["/bin/sh", "-c", command], {
     stdin: "ignore",
     stdout: json ? "ignore" : "inherit",
     stderr: json ? "ignore" : "inherit",
   });
+  onChild?.(child);
   const timer = setInterval(renew, RENEW_MS);
   if (typeof timer === "object" && typeof timer.unref === "function") timer.unref();
   try {
@@ -200,6 +206,7 @@ async function despachar(command: string, json: boolean, renew: () => void): Pro
     return child.exitCode ?? 1;
   } finally {
     clearInterval(timer);
+    onChild?.(null);
   }
 }
 
@@ -327,41 +334,216 @@ function readJudgeVerdict(root: string, plan: string): string | undefined {
   }
 }
 
+type TickOptions = {
+  dryRun: boolean;
+  json: boolean;
+  loop: boolean;
+  base: string;
+  repo?: string;
+};
+
+type LoopControl = {
+  readonly stopped: boolean;
+  setChild(child: any | null): void;
+  sleep(ms: number): Promise<void>;
+  dispose(): void;
+};
+
+function stateDbPath(base: string): string {
+  return process.env.GINGA_STATE_DB && process.env.GINGA_STATE_DB !== ""
+    ? process.env.GINGA_STATE_DB
+    : join(base, ".ginga", "state", "state.db");
+}
+
+/** Filtro do supervisor: o repo exato ou qualquer PLAN que comece por ele. */
+function filterQueueByRepo(queue: QueueEntry[], repo: string | undefined): QueueEntry[] {
+  if (!repo) return queue;
+  return queue.filter((entry) => entry.plan === repo || entry.plan.startsWith(repo));
+}
+
+/**
+ * Pendência claimável do loop: TASK aberta, sem dependência, sem status
+ * `dispatched` e sem lease vivo. Uma lease válida de outro tick não conta.
+ */
+function queueHasClaimablePending(queue: QueueEntry[], dbPath: string): boolean {
+  const candidates = queue.filter((entry) => entry.state === "open" && entry.blocked_by.length === 0);
+  if (candidates.length === 0) return false;
+  if (!existsSync(dbPath)) return true;
+  const db = openDbForTick(dbPath);
+  try {
+    const now = Date.now();
+    return candidates.some((entry) =>
+      claimavel(getRow(db, { plan: entry.plan, task: entry.task }), now),
+    );
+  } finally {
+    db.close();
+  }
+}
+
+function envNonNegativeInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
+}
+
+/** Interrompe o loop com exit 0 quando o processo recebe SIGTERM/SIGINT. */
+function createLoopControl(): LoopControl {
+  let stopped = false;
+  let activeChild: any | null = null;
+  let wakeSleep: (() => void) | null = null;
+
+  const onSignal = () => {
+    stopped = true;
+    wakeSleep?.();
+    try {
+      activeChild?.kill();
+    } catch {
+      // o filho já pode ter terminado
+    }
+  };
+  process.on("SIGTERM", onSignal);
+  process.on("SIGINT", onSignal);
+
+  return {
+    get stopped() {
+      return stopped;
+    },
+    setChild(child: any | null) {
+      activeChild = child;
+      if (stopped && child) {
+        try {
+          child.kill();
+        } catch {
+          // o filho já pode ter terminado
+        }
+      }
+    },
+    sleep(ms: number): Promise<void> {
+      if (stopped) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          wakeSleep = null;
+          resolve();
+        }, ms);
+        wakeSleep = () => {
+          clearTimeout(timer);
+          wakeSleep = null;
+          resolve();
+        };
+        if (stopped) wakeSleep?.();
+      });
+    },
+    dispose() {
+      process.off("SIGTERM", onSignal);
+      process.off("SIGINT", onSignal);
+      activeChild = null;
+      wakeSleep = null;
+    },
+  };
+}
+
+function printTickResult(options: TickOptions, dispatched: string[]): void {
+  if (options.json) console.log(JSON.stringify({ dispatched }));
+  else if (options.dryRun) for (const ref of dispatched) console.log(`despacharia: ${ref}`);
+}
+
 /** Ponto de entrada do worker: `bun src/tick.ts tick […flags]`. */
 export async function runTick(args: string[]): Promise<number> {
   let dryRun = false;
   let json = false;
+  let loop = false;
   let root: string | undefined;
+  let repo: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--dry-run") dryRun = true;
     else if (a === "--json") json = true;
-    else if (a === "--root") root = args[++i];
+    else if (a === "--loop") loop = true;
+    else if (a === "--repo") {
+      const value = args[++i];
+      if (value === undefined || value === "" || value.startsWith("--")) {
+        console.error("uso: ginga tick [--dry-run] [--json] [--loop] [--repo R] [--root D] (falta valor para --repo)");
+        return 2;
+      }
+      repo = value;
+    } else if (a.startsWith("--repo=")) {
+      repo = a.slice("--repo=".length);
+      if (repo === "") {
+        console.error("uso: ginga tick [--dry-run] [--json] [--loop] [--repo R] [--root D] (falta valor para --repo)");
+        return 2;
+      }
+    } else if (a === "--root") root = args[++i];
     else if (a.startsWith("--root=")) root = a.slice("--root=".length);
     else {
-      console.error(`uso: ginga tick [--dry-run] [--json] [--root D] (flag desconhecida: ${a})`);
+      console.error(`uso: ginga tick [--dry-run] [--json] [--loop] [--repo R] [--root D] (flag desconhecida: ${a})`);
       return 2;
     }
   }
   const base = root && root !== "" ? root : process.cwd();
+  const options: TickOptions = { dryRun, json, loop, base, repo };
   const commands = readCommands(base);
 
   let queue: QueueEntry[];
   try {
-    queue = readQueue(base, commands.queue);
+    queue = filterQueueByRepo(readQueue(base, commands.queue), repo);
   } catch (e) {
     console.error(`tick: fila indisponível: ${(e as Error).message}`);
     return 1;
   }
 
-  const dbPath =
-    process.env.GINGA_STATE_DB && process.env.GINGA_STATE_DB !== ""
-      ? process.env.GINGA_STATE_DB
-      : join(base, ".ginga", "state", "state.db");
+  const dispatched: string[] = [];
+  if (!loop) {
+    const code = await runTickPass(options, commands, queue, dispatched);
+    printTickResult(options, dispatched);
+    return code;
+  }
+
+  const dbPath = stateDbPath(base);
+  const maxPasses = envNonNegativeInt("GINGA_TICK_LOOP_MAX", 0);
+  const loopMs = envNonNegativeInt("GINGA_TICK_LOOP_MS", 5_000);
+  const control = createLoopControl();
+  try {
+    let passes = 0;
+    while (!control.stopped) {
+      if (maxPasses > 0 && passes >= maxPasses) break;
+      if (!queueHasClaimablePending(queue, dbPath)) break;
+
+      const code = await runTickPass(options, commands, queue, dispatched, control);
+      if (code !== 0) return code;
+      passes++;
+      if (control.stopped) break;
+      if (maxPasses > 0 && passes >= maxPasses) break;
+
+      try {
+        queue = filterQueueByRepo(readQueue(base, commands.queue), repo);
+      } catch (e) {
+        console.error(`tick: fila indisponível: ${(e as Error).message}`);
+        return 1;
+      }
+      if (!queueHasClaimablePending(queue, dbPath)) break;
+      await control.sleep(loopMs);
+    }
+  } finally {
+    control.dispose();
+  }
+  printTickResult(options, dispatched);
+  return 0;
+}
+
+/** Uma passada do tick; no loop, o wrapper repete enquanto houver pendência. */
+async function runTickPass(
+  options: TickOptions,
+  commands: Commands,
+  queue: QueueEntry[],
+  despachadas: string[],
+  control?: LoopControl,
+): Promise<number> {
+  const { dryRun, json, base } = options;
+  const dbPath = stateDbPath(base);
   const owner = `tick-${process.pid}`;
 
   let db: Database | null = null;
-  const despachadas: string[] = [];
   try {
     // dry-run não grada nada: só a fila e, se o db já existir, leitura de lease.
     db = dryRun ? (existsSync(dbPath) ? openDbForTick(dbPath) : null) : openDbForTick(dbPath);
@@ -370,6 +552,7 @@ export async function runTick(args: string[]): Promise<number> {
     if (db) {
       const plans = [...new Set(queue.map(q => q.plan))];
       for (const plan of plans) {
+        if (control?.stopped) break;
         let planPhase = getPhase(db, plan);
         if (!planPhase) {
           // TASK-08 (e2e sem humano): PLAN aprovado no bundle sem linha de fase
@@ -421,7 +604,7 @@ export async function runTick(args: string[]): Promise<number> {
           despachadas.push(action.task ? `${plan}/${action.task}` : plan);
           continue;
         }
-        const code = await despachar(command, json, () => {});
+        const code = await despachar(command, json, () => {}, (child) => control?.setChild(child));
         // red/run avançam a fase no DESPACHO (a tentativa conta mesmo falhando,
         // para o replan depois de 3 falhas ver attempts no task_exec).
         if (action.cmd === "red") {
@@ -457,6 +640,7 @@ export async function runTick(args: string[]): Promise<number> {
     }
     
     for (const entry of queue) {
+      if (control?.stopped) break;
       if (entry.state !== "open" || entry.blocked_by.length > 0) continue;
       // Skip if this plan is phase-managed and we handled it above?
       if (db) {
@@ -472,7 +656,12 @@ export async function runTick(args: string[]): Promise<number> {
       if (!claim(db, exec, owner)) continue;
       emitTransition(exec);
       const command = fill(commands.dispatch, { plan: exec.plan, task: exec.task, root: base });
-      const code = await despachar(command, json, () => renovate(db!, exec, owner));
+      const code = await despachar(
+        command,
+        json,
+        () => renovate(db!, exec, owner),
+        (child) => control?.setChild(child),
+      );
       finalize(db!, exec, code);
       if (code === 0) {
         despachadas.push(entry.ref);
@@ -485,8 +674,6 @@ export async function runTick(args: string[]): Promise<number> {
     db?.close();
   }
 
-  if (json) console.log(JSON.stringify({ dispatched: despachadas }));
-  else if (dryRun) for (const ref of despachadas) console.log(`despacharia: ${ref}`);
   return 0;
 }
 

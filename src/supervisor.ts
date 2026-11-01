@@ -15,6 +15,7 @@ export type Lane = {
 
 export type SupervisorOptions = {
   root?: string;
+  mode?: "tick" | "operador";
   backoffBaseMs?: number;
   backoffMaxMs?: number;
   maxRestarts?: number;
@@ -185,6 +186,9 @@ export class Supervisor {
     const idleMs = opts.idleCooldownMs ?? 600_000;
     const restartCooldownMs = opts.restartCooldownMs ?? 1_800_000;
     const root = opts.root ?? process.cwd();
+    // TASK-20 (PLAN-0028): padrão da classe = "operador" (comportamento histórico);
+    // o padrão "tick" vive na config (parseSupervisorConfig) e chega pelo serve.
+    const mode = opts.mode ?? "operador";
     const spawnFn =
       opts.spawn ??
       ((cmd: string, o: any) => {
@@ -215,7 +219,10 @@ export class Supervisor {
       // valor depois da saída (decisão de cooldown de ociosidade).
       const progressBefore = opts.progressCheck ? await opts.progressCheck(lane) : null;
 
-      const child = spawnFn(lane.command, { cwd: lane.cwd ?? root });
+      // TASK-20: em mode tick o filho é o próprio tick (`ginga tick --loop --repo <repo>`),
+      // não um operador LLM; em mode operador mantém lane.command.
+      const command = mode === "tick" ? childArgv({ mode, repo: lane.repo }).join(" ") : lane.command;
+      const child = spawnFn(command, { cwd: lane.cwd ?? root });
       runs++;
 
       // PID do filho para o heartbeat (TASK-21 / T112): só um inteiro > 0 vale;
@@ -366,6 +373,7 @@ export function createSupervisor(lanes: Lane[], opts?: SupervisorOptions): Super
 // Config parsing
 export function parseSupervisorConfig(raw: string): {
   lanes: Lane[];
+  mode: "tick" | "operador";
   backoffBaseMs: number;
   backoffMaxMs: number;
   maxRestarts: number;
@@ -373,6 +381,8 @@ export function parseSupervisorConfig(raw: string): {
   restartCooldownMs: number;
 } {
   const lanes: Lane[] = [];
+  // TASK-20: padrão "tick" na config (desde o e2e TASK-08); "operador" só se escrito.
+  let mode: "tick" | "operador" = "tick";
   let backoffBaseMs = 60_000;
   let backoffMaxMs = 600_000;
   let maxRestarts = 3;
@@ -398,6 +408,7 @@ export function parseSupervisorConfig(raw: string): {
     const val = kv[2].trim();
     const unq = (v: string) => v.replace(/^"(.*)"$/, "$1");
     if (section === "supervisor") {
+      if (key === "mode") mode = unq(val) === "operador" ? "operador" : "tick";
       if (key === "backoff_base_ms" || key === "backoff_base") backoffBaseMs = Number(unq(val)) || backoffBaseMs;
       if (key === "backoff_max_ms" || key === "backoff_max") backoffMaxMs = Number(unq(val)) || backoffMaxMs;
       if (key === "max_restarts") maxRestarts = Number(unq(val)) || maxRestarts;
@@ -438,7 +449,7 @@ export function parseSupervisorConfig(raw: string): {
     }
   }
   flush();
-  return { lanes, backoffBaseMs, backoffMaxMs, maxRestarts, idleCooldownMs, restartCooldownMs };
+  return { lanes, mode, backoffBaseMs, backoffMaxMs, maxRestarts, idleCooldownMs, restartCooldownMs };
 }
 
 // TASK-07: alterna entre operador LLM e tick direto
