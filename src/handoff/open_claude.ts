@@ -40,10 +40,10 @@ export async function openClaudeSession(
     source: "cli",
     ...(plan ? { plan } : {}),
     data: {
-      trigger: "cache",
+      trigger: o.trigger ?? "manual",
       context_tokens: 0,
       handoff_tokens: 0,
-      depth: 0,
+      depth: o.depth ?? 0,
       file: o.handoffPath,
       runtime: "claude",
       model: o.model,
