@@ -128,7 +128,10 @@ export const claudeAdapter: Adapter = {
     const market = claudeMarketplace(plugin);
     const key = claudeKey(plugin);
     const settingsOwned = [`/enabledPlugins/${key}`];
-    if (handoffHooksProjected) settingsOwned.push("/hooks/UserPromptSubmit");
+    if (handoffHooksProjected) {
+      settingsOwned.push("/hooks/Stop");
+      settingsOwned.push("/hooks/UserPromptSubmit");
+    }
     return {
       ".claude/plugins/known_marketplaces.json": [`/${market}`],
       ".claude/plugins/installed_plugins.json": [`/plugins/${key}`],
@@ -199,6 +202,11 @@ export const claudeAdapter: Adapter = {
     ];
     writeJson(ipPath, ip);
 
+    // 3. Verify handoff artifacts in source
+    const hasHandoffSkills = existsSync(join(ctx.source, "skills", "handoff"));
+    const hasHandoffMod = existsSync(join(ctx.source, "contrib", "claude-mod-handoff"));
+    const sourceHasHandoff = hasHandoffSkills || hasHandoffMod;
+
     // 3. settings.json (ausente -> criado em cima de {})
     const settingsPath = join(shadowHome, ".claude/settings.json");
     const settings = readJsonObject(settingsPath);
@@ -209,17 +217,53 @@ export const claudeAdapter: Adapter = {
         ? {}
         : (settings.enabledPlugins as Record<string, unknown>);
     plugins[key] = true;
-    settings.enabledPlugins = plugins;
-    // Hooks de handoff: só na chamada padrão do adapter (sem plugin
-    // parametrizado no ctx). No fluxo do `ginga install` o plugin é sempre
-    // resolvido e passado no ctx — nesse caso os hooks vêm do próprio mod
-    // do plugin (contrib/claude-mod-handoff), e o settings.json existente
-    // fica intocado (contrato congelado da T12/T13).
-    handoffHooksProjected = false;
-    if (ctx.plugin === undefined) {
+
+    // Project handoff hooks if condition met: ctx.plugin === undefined OR source has artifacts
+    const shouldProjectHooks = ctx.plugin === undefined || sourceHasHandoff;
+    handoffHooksProjected = shouldProjectHooks;
+
+    if (shouldProjectHooks) {
       ensureHandoffHooks(settings);
-      handoffHooksProjected = true;
     }
+
+    // Register mod if source has contrib/claude-mod-handoff with plugin.json
+    const modPluginPath = join(ctx.source, "contrib", "claude-mod-handoff", ".claude-plugin", "plugin.json");
+    if (existsSync(modPluginPath)) {
+      const modPlugin = readJsonObject(modPluginPath);
+      const modName = modPlugin.name || "claude-mod-handoff";
+      const modVersion = modPlugin.version || "local";
+      const modKey = `${modName}@${CLAUDE_MARKETPLACE}`;
+
+      // Register in installed_plugins.json
+      if (
+        ip.plugins === null ||
+        typeof ip.plugins !== "object" ||
+        Array.isArray(ip.plugins)
+      ) {
+        ip.plugins = {};
+      }
+      ip.plugins[modKey] = [
+        {
+          scope: "user",
+          installPath: join(ctx.source, "contrib", "claude-mod-handoff"),
+          version: modVersion,
+          installedAt: ctx.now,
+          lastUpdated: ctx.now,
+        },
+      ];
+
+      // Enable in settings.enabledPlugins
+      plugins[modKey] = true;
+    }
+
+    settings.enabledPlugins = plugins;
     writeJson(settingsPath, settings);
+
+    // Update lastUpdated timestamps
+    mkt[market].lastUpdated = ctx.now;
+    writeJson(mktPath, mkt);
+
+    ip.plugins[key][0].lastUpdated = ctx.now;
+    writeJson(ipPath, ip);
   },
 };
