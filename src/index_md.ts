@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 try { (global as any).mkdirSync = (global as any).mkdirSync || mkdirSync; } catch {}
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { Database } from "bun:sqlite";
 import { deriveBoard, type Board } from "./board";
 import { openStateDb, resolveStateDbPath } from "./state/db";
@@ -33,14 +33,43 @@ okf: "0.1"
 <!-- ginga:board:backlog -->
 `;
 
-function renderSection(title: string, items: Array<{ id: string; title?: string }>): string {
-  if (items.length === 0) return `## ${title}\n\n(nenhum)\n`;
-  const lines = [`## ${title}`, ""];
-  for (const it of items) {
-    lines.push(`- [${it.id}] ${it.title ?? it.id}`);
+function renderSection(title: string, items: Array<{ id: string; title?: string }>, includeHeading = true): string {
+  const lines: string[] = [];
+  if (includeHeading) lines.push(`## ${title}`, "");
+  if (items.length === 0) {
+    lines.push("(nenhum)");
+  } else {
+    for (const it of items) {
+      lines.push(`- [${it.id}] ${it.title ?? it.id}`);
+    }
   }
   lines.push("");
   return lines.join("\n");
+}
+
+function replaceSection(out: string, marker: string, title: string, items: Array<{ id: string; title?: string }>): string {
+  const markerAt = out.indexOf(marker);
+  if (markerAt < 0) return out;
+  const previousLine = out
+    .slice(0, markerAt)
+    .split("\n")
+    .map((line) => line.trim())
+    .reverse()
+    .find((line) => line !== "") ?? "";
+  const hasHeading = previousLine.startsWith("## ");
+  return out.replace(marker, () => renderSection(title, items, !hasHeading));
+}
+
+function resolveBundleRoot(root: string): string {
+  return basename(root) === ".ginga" ? root : join(root, ".ginga");
+}
+
+function findTemplatePath(root: string, bundleRoot: string): string | null {
+  const bundleTemplate = join(bundleRoot, "index.template.md");
+  if (existsSync(bundleTemplate)) return bundleTemplate;
+  const legacyTemplate = join(root, "index.template.md");
+  if (bundleRoot !== root && existsSync(legacyTemplate)) return legacyTemplate;
+  return null;
 }
 
 export function renderIndex(b: Board, template: string, now: Date = new Date()): string {
@@ -69,48 +98,40 @@ export function renderIndex(b: Board, template: string, now: Date = new Date()):
   const concluido = b.columns?.FEITO || [];
   const backlog = b.columns?.INTENT || [];
 
-  if (out.includes("<!-- ginga:board:pronto -->")) {
-    out = out.replace("<!-- ginga:board:pronto -->", renderSection("Pronto para pegar", pronto));
-  }
-  if (out.includes("<!-- ginga:board:esperando -->")) {
-    out = out.replace("<!-- ginga:board:esperando -->", renderSection("Esperando o dono", esperando));
-  }
-  if (out.includes("<!-- ginga:board:em_andamento -->")) {
-    out = out.replace("<!-- ginga:board:em_andamento -->", renderSection("Em andamento", emAndamento));
-  }
-  if (out.includes("<!-- ginga:board:concluido -->")) {
-    out = out.replace("<!-- ginga:board:concluido -->", renderSection("Concluído", concluido));
-  }
-  if (out.includes("<!-- ginga:board:backlog -->")) {
-    out = out.replace("<!-- ginga:board:backlog -->", renderSection("Backlog (INTENTs sem PLAN)", backlog));
-  }
+  out = replaceSection(out, "<!-- ginga:board:pronto -->", "Pronto para pegar", pronto);
+  out = replaceSection(out, "<!-- ginga:board:esperando -->", "Esperando o dono", esperando);
+  out = replaceSection(out, "<!-- ginga:board:em_andamento -->", "Em andamento", emAndamento);
+  out = replaceSection(out, "<!-- ginga:board:concluido -->", "Concluído", concluido);
+  out = replaceSection(out, "<!-- ginga:board:backlog -->", "Backlog (INTENTs sem PLAN)", backlog);
 
   return out;
 }
 
 export function writeIndex(root: string, db: Database): { changed: boolean } {
-  const templatePath = existsSync(join(root, ".ginga", "index.template.md")) ? join(root, ".ginga", "index.template.md") : existsSync(join(root, "index.template.md")) ? join(root, "index.template.md") : null;
-  const outPath = join(root, ".ginga", "index.md");
+  const bundleRoot = resolveBundleRoot(root);
+  const templatePath = findTemplatePath(root, bundleRoot);
+  const outPath = join(bundleRoot, "index.md");
   let template: string;
   if (templatePath) {
     template = readFileSync(templatePath, "utf8");
   } else {
     template = DEFAULT_TEMPLATE;
   }
-  const board = deriveBoard(root, db);
+  const board = deriveBoard(bundleRoot, db);
   const rendered = renderIndex(board, template, new Date());
   const prev = existsSync(outPath) ? readFileSync(outPath, "utf8") : null;
   if (prev === rendered) {
     return { changed: false };
   }
-  mkdirSync(join(root, ".ginga"), { recursive: true });
+  mkdirSync(bundleRoot, { recursive: true });
   writeFileSync(outPath, rendered);
   return { changed: true };
 }
 
 export function checkIndex(root: string): boolean {
-  const templatePath = existsSync(join(root, ".ginga", "index.template.md")) ? join(root, ".ginga", "index.template.md") : existsSync(join(root, "index.template.md")) ? join(root, "index.template.md") : null;
-  const outPath = join(root, ".ginga", "index.md");
+  const bundleRoot = resolveBundleRoot(root);
+  const templatePath = findTemplatePath(root, bundleRoot);
+  const outPath = join(bundleRoot, "index.md");
   if (!existsSync(outPath)) return false;
   let template: string;
   if (templatePath) {
@@ -118,9 +139,15 @@ export function checkIndex(root: string): boolean {
   } else {
     template = DEFAULT_TEMPLATE;
   }
-  const db = openStateDb(resolveStateDbPath(root));
+  const envDbPath = process.env.GINGA_STATE_DB;
+  const dbPath = envDbPath && envDbPath !== ""
+    ? envDbPath
+    : root === bundleRoot
+      ? join(bundleRoot, "state", "state.db")
+      : resolveStateDbPath(root);
+  const db = openStateDb(dbPath);
   try {
-    const board = deriveBoard(root, db);
+    const board = deriveBoard(bundleRoot, db);
     const rendered = renderIndex(board, template, new Date());
     const cur = readFileSync(outPath, "utf8");
     return cur === rendered;
