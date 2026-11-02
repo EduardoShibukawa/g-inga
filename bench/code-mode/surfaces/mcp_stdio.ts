@@ -1,84 +1,101 @@
-/**
- * MCP stdio mínima - JSON-RPC 2.0 para o modo M.
- * Lê stdin line-by-line, processa requests e escreve stdout.
- * Suporta: initialize, tools/list, tools/call.
- * Sem dependência externa.
- */
+/** MCP stdio mínima — JSON-RPC 2.0, uma requisição por linha. */
 
 import { handle } from "./m";
 
-function parseMessage(line: string): { jsonrpc: "2.0"; id: number; method: string; params?: any } | null {
-  const trimmed = line.trim();
-  if (!trimmed) return null;
+type Request = {
+  jsonrpc: "2.0";
+  id: number | string | null;
+  method: string;
+  params?: any;
+};
+
+function snapshotFromArgv(): string {
+  const index = process.argv.indexOf("--snapshot");
+  const value = index >= 0 ? process.argv[index + 1] : undefined;
+  return value && !value.startsWith("--") ? value : process.cwd();
+}
+
+const snapshot = snapshotFromArgv();
+let buffer = "";
+
+function send(message: unknown): void {
+  process.stdout.write(`${JSON.stringify(message)}\n`);
+}
+
+function parseRequest(line: string): Request | null {
   try {
-    const msg = JSON.parse(trimmed) as any;
-    if (msg.jsonrpc === "2.0" && msg.method) {
-      return { jsonrpc: "2.0", id: msg.id, method: msg.method, params: msg.params };
-    }
+    const value = JSON.parse(line) as Partial<Request>;
+    if (value.jsonrpc !== "2.0" || typeof value.method !== "string") return null;
+    return {
+      jsonrpc: "2.0",
+      id: value.id ?? null,
+      method: value.method,
+      params: value.params,
+    };
   } catch {
-    // ignore malformed lines
+    return null;
   }
-  return null;
 }
 
-function sendMessage(msg: any): void {
-  process.stdout.write(JSON.stringify(msg) + "\n");
+function toolResult(value: unknown): unknown {
+  if (value && typeof value === "object" && "error" in value) return value;
+  return {
+    content: [
+      {
+        type: "text",
+        text: typeof value === "string" ? value : JSON.stringify(value),
+      },
+    ],
+  };
 }
 
-buffer = "";
+function processRequest(request: Request): void {
+  if (request.method === "initialize") {
+    send({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: {
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: {} },
+        serverInfo: { name: "ginga-code-mode-m", version: "0.1.0" },
+      },
+    });
+    return;
+  }
 
-process.stdin.on("data", (data) => {
-  buffer += data.toString();
-});
+  const response = handle(
+    { id: Number(request.id), method: request.method, params: request.params },
+    snapshot,
+  ) as any;
+  if (request.method === "tools/call" && response?.result) {
+    response.result = toolResult(response.result);
+  }
+  send(response);
+}
 
-process.stdin.on("end", () => {
-  // Process any remaining data
-  processMessages();
-});
-
-function processMessages(): void {
+function processBuffer(final = false): void {
   const lines = buffer.split("\n");
-  buffer = lines.pop() || ""; // keep incomplete line in buffer
-
+  buffer = final ? "" : (lines.pop() ?? "");
   for (const line of lines) {
-    const msg = parseMessage(line);
-    if (!msg) continue;
-
-    const { id, method, params } = msg;
-
-    if (method === "initialize") {
-      sendMessage({
-        jsonrpc: "2.0",
-        id,
-        result: {
-          protocolVersion: "2024-11-05",
-          capabilities: {
-            tools: {}
-          },
-          serverInfo: { name: "mcp-stdio", version: "0.1.0" }
-        }
-      });
-    } else if (method === "tools/list") {
-      const listResult = handle({ id, method, params }, "") as any;
-      sendMessage({
-        jsonrpc: "2.0",
-        id,
-        result: listResult.result
-      });
-    } else if (method === "tools/call") {
-      const toolName = params?.name;
-      const args = params?.arguments ?? {};
-      const snapshot = params?.snapshot || "";
-      const callResult = handle({ id, method, params: { name: toolName, arguments: args, snapshot } }, snapshot);
-      sendMessage(callResult);
+    if (!line.trim()) continue;
+    const request = parseRequest(line);
+    if (!request) {
+      send({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } });
+      continue;
     }
+    processRequest(request);
+  }
+  if (final && buffer.trim()) {
+    const request = parseRequest(buffer);
+    buffer = "";
+    if (request) processRequest(request);
   }
 }
 
-// Handle stdin pipe end
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk: string) => {
+  buffer += chunk;
+  processBuffer();
+});
+process.stdin.on("end", () => processBuffer(true));
 process.stdin.resume();
-
-// Se houver dados completos imediatamente, processa
-if (buffer.length > 0) {
-  processMessages();
-}
