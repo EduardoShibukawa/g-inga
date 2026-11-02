@@ -12,6 +12,7 @@ import * as triageVerb from "./triage";
 import * as write from "./write";
 import { HANDOFF_HOOK_VERB, HANDOFF_VERBS } from "./handoff";
 import { LEARNING_VERBS } from "./learning";
+import { indexVerb } from "./index";
 
 export type VerbCtx = { by: string; via: string; root: string; db: Database };
 /** `bool` marca argumento flag (`--yes`): a CLI aceita sem valor (T127). */
@@ -46,7 +47,10 @@ export const VERBS: Verb[] = [
   { name: "status", args: [], write: false, run: read.status },
   { name: "board", args: [], write: false, run: read.board },
   { name: "inbox", args: [], write: false, run: read.inbox },
+  { name: "alerts", args: [arg("sev")], write: false, run: read.alerts },
   { name: "watch", args: [arg("target", true)], write: false, run: read.watch },
+  // PLAN-0012 TASK-06/14: gera o index.md do bundle; --check só confere (exit 1 se desatualizado).
+  { name: "index", args: [{ name: "check", bool: true }], write: true, run: indexVerb },
   // Operação (PLAN-0015 TASK-03): equivalente para cada subcomando do
   // bin/homelab. `verify`/`maestro` delegam ao pinga do PATH, `gira` é
   // passthrough, `web` controla o `serve` do ginga; ctl/tui/hermes/hud

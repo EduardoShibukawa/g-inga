@@ -12,7 +12,7 @@
 // O serve roda para sempre e precisa do event loop, então src/cli.ts usa este
 // arquivo como worker (sync fachada → `bun src/serve.ts serve …`).
 
-import { readFileSync, watch } from "node:fs";
+import { existsSync, readFileSync, watch } from "node:fs";
 import { join, resolve } from "node:path";
 import { runTick } from "./tick.ts";
 import { parseCommands } from "./tick.ts";
@@ -23,6 +23,7 @@ import { routeEvents } from "./notify/router.ts";
 import { send as portSend } from "./notify/port.ts";
 import { openStateDb, resolveStateDbPath } from "./state/db.ts";
 import { ingestEvents } from "./state/ingest.ts";
+import { writeIndex } from "./index_md.ts";
 import { startApi } from "./api/server.ts";
 
 /** Bind sem auth (TASK-04): só loopback; fora daqui, só com credencial. */
@@ -229,6 +230,19 @@ export function makeTickRunner(root: string): () => void {
     } catch (e) {
       console.error(`serve: watch falhou: ${(e as Error).message}`);
     }
+    // PLAN-0012 TASK-06/14: regenera o .ginga/index.md a cada tick (o watcher
+    // de $GINGA_EVENTS acorda o tick em cada evento, inclusive `transition`).
+    // writeIndex não grava nada se o conteúdo for idêntico.
+    try {
+      const db = openStateDb(resolveStateDbPath(root));
+      try {
+        writeIndex(root, db);
+      } finally {
+        db.close();
+      }
+    } catch (e) {
+      console.error(`serve: regenerar index falhou: ${(e as Error).message}`);
+    }
     try {
       await routePending(root);
     } catch (e) {
@@ -287,7 +301,24 @@ export async function runServe(args: string[]): Promise<number> {
     hostname: host,
     port: cfg.port,
     eventsPath: eventsPath !== "" ? eventsPath : undefined,
-    fallback: () => new Response("ginga serve\n"),
+    fallback: (req: Request) => {
+      const workspaceWebDir = join(base, "web");
+      const installWebDir = join(import.meta.dir, "..", "web");
+      const webDir = existsSync(workspaceWebDir) ? workspaceWebDir : installWebDir;
+      const url = new URL(req.url);
+      let rel = url.pathname === "/" ? "index.html" : url.pathname.replace(/^\/+/, "");
+      if (rel.includes("..")) return new Response("not found", { status: 404 });
+      const full = join(webDir, rel);
+      if (!existsSync(full)) {
+        if (rel === "index.html" && !existsSync(workspaceWebDir) && !existsSync(installWebDir)) {
+          return new Response("ginga serve\n", { status: 200 });
+        }
+        return new Response("not found", { status: 404 });
+      }
+      const ext = rel.split(".").pop()?.toLowerCase();
+      const type = ext === "html" ? "text/html" : ext === "js" ? "text/javascript" : ext === "css" ? "text/css" : "application/octet-stream";
+      return new Response(readFileSync(full), { status: 200, headers: { "content-type": type } });
+    },
     ...(authOn
       ? { auth: { ...(token !== undefined ? { token } : {}), ...(allow.length > 0 ? { allow } : {}) } }
       : {}),
