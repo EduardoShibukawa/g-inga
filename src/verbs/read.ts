@@ -4,6 +4,7 @@
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { listAlerts, type AlertSeverity } from "../alerts";
 import { deriveBoard } from "../board";
 import { buildStatus } from "../status";
 import { fmGet } from "./write";
@@ -80,6 +81,19 @@ export function inbox(ctx: VerbCtx): unknown {
   const b = deriveBoard(ctx.root, ctx.db);
   const items = b.inbox as Array<Record<string, unknown>>;
   return { items };
+}
+
+function alertSeverity(value: string | undefined): AlertSeverity | undefined {
+  const severity = value?.trim().toLowerCase();
+  return severity === "info" || severity === "warn" || severity === "high" || severity === "critical"
+    ? severity
+    : undefined;
+}
+
+/** alerts: alertas do state.db, opcionalmente a partir de uma severidade mínima. */
+export function alerts(ctx: VerbCtx, args: VerbArgs): unknown {
+  const minSeverity = alertSeverity(args.sev);
+  return { items: listAlerts(ctx.db, { minSeverity }) };
 }
 
 /** watch: histórico do alvo no state.db — PLAN-NNNN, TASK-NN ou PLAN-NNNN/TASK-NN. */

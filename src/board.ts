@@ -3,6 +3,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Database } from "bun:sqlite";
+import { listAlerts } from "./alerts";
 import { fmGet } from "./verbs/write";
 import { listLearnings } from "./lessons";
 
@@ -345,6 +346,19 @@ export function deriveBoard(root: string, db: Database): Board {
       plan: blocker.plan,
       task: blocker.task,
       actions: ["answer"],
+    });
+  }
+
+  // Alertas do vigia entram no mesmo Inbox, sem ações de escrita.
+  for (const alert of listAlerts(db)) {
+    inbox.push({
+      id: alert.id,
+      type: "alerta",
+      entity: alert.entity,
+      title: alert.summary,
+      severity: alert.severity,
+      ...(alert.plan ? { plan: alert.plan } : {}),
+      actions: [],
     });
   }
 

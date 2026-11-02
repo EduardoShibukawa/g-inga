@@ -47,6 +47,7 @@ export const VERBS: Verb[] = [
   { name: "status", args: [], write: false, run: read.status },
   { name: "board", args: [], write: false, run: read.board },
   { name: "inbox", args: [], write: false, run: read.inbox },
+  { name: "alerts", args: [arg("sev")], write: false, run: read.alerts },
   { name: "watch", args: [arg("target", true)], write: false, run: read.watch },
   // PLAN-0012 TASK-06/14: gera o index.md do bundle; --check só confere (exit 1 se desatualizado).
   { name: "index", args: [{ name: "check", bool: true }], write: true, run: indexVerb },

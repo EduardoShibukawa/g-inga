@@ -36,6 +36,9 @@
         <a href="#plan" data-view="plan" aria-controls="view-plan">
           <span>PLAN</span>
         </a>
+        <a href="#alerts" data-view="alerts" aria-controls="view-alerts">
+          <span>Alertas</span>
+        </a>
       </nav>
 
       <div class="sidebar-footer">
@@ -103,6 +106,23 @@
           </header>
           <div class="panel" data-plan aria-live="polite">
             <p class="empty-state">Selecione um PLAN no Quadro para abrir o detalhe.</p>
+          </div>
+        </section>
+
+        <section id="view-alerts" class="view" data-view="alerts" aria-labelledby="title-alerts" hidden>
+          <header class="view-header">
+            <div>
+              <p class="eyebrow">Vigia do workspace</p>
+              <h1 id="title-alerts">Alertas</h1>
+            </div>
+            <p class="view-description">Alertas do vigia, filtrados pela severidade mínima escolhida na URL.</p>
+          </header>
+          <div class="panel" data-alerts aria-live="polite">
+            <div class="alerts-header">
+              <h2>Alertas</h2>
+              <span class="alerts-count" data-count>—</span>
+            </div>
+            <ul class="alerts-list" data-alerts-list></ul>
           </div>
         </section>
       </main>
