@@ -75,7 +75,7 @@ describe("web/inbox.js — T330", () => {
     expect(el.textContent).toBe("4");
   });
 
-  test("connectInboxSse: evento "message" do SSE dispara a atualização do contador", async () => {
+  test("connectInboxSse: evento \"message\" do SSE dispara a atualização do contador", async () => {
     const mod = await import("../web/inbox.js");
     const el = counter();
     let onMessage: ((ev: any) => void) | null = null;
