@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { validateEvent } from "../src/events/validate.ts";
 
 const ROOT = join(import.meta.dir, "..");
 const FIXTURE = join(ROOT, "tests/fixtures/handoff-ab.jsonl");
@@ -34,6 +35,15 @@ async function loadModules(): Promise<{ store: any; ab: any }> {
 }
 
 describe("PLAN-0014 TASK-06 — A/B handoff no bench do ginga", () => {
+  test("o fixture usa envelopes v1 válidos", () => {
+    const events = readFileSync(FIXTURE, "utf8")
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => validateEvent(JSON.parse(line)));
+    expect(events).toHaveLength(8);
+    expect(events.every((result) => result.ok)).toBe(true);
+  });
+
   test("registra experimento, braços, runs e eventos v1", async () => {
     const { store, ab } = await loadModules();
     expect(store).not.toBeNull();
