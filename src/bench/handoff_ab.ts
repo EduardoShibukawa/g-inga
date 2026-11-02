@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
+import { validateEvent } from "../events/validate.ts";
 import { HANDOFF_AB_ARMS, HANDOFF_AB_EXPERIMENT } from "./store.ts";
 
 type Arm = (typeof HANDOFF_AB_ARMS)[number];
@@ -44,8 +45,9 @@ function parseEvents(path: string): BenchEvent[] {
     }
     const value = parsed as BenchEvent;
     if (value.kind !== "attempt" && value.kind !== "handoff") continue;
-    if (value.v !== 1 || typeof value.id !== "string" || typeof value.ts !== "string") {
-      throw new Error(`evento inválido na linha ${index + 1}: exige envelope v1 com id e ts`);
+    const validation = validateEvent(parsed);
+    if (!validation.ok) {
+      throw new Error(`evento inválido na linha ${index + 1}: ${validation.errors.join("; ")}`);
     }
     if (typeof value.data !== "object" || value.data === null) {
       throw new Error(`evento inválido na linha ${index + 1}: data deve ser objeto`);
