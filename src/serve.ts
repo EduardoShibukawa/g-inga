@@ -302,13 +302,17 @@ export async function runServe(args: string[]): Promise<number> {
     port: cfg.port,
     eventsPath: eventsPath !== "" ? eventsPath : undefined,
     fallback: (req: Request) => {
-      const webDir = join(base, "web");
+      const workspaceWebDir = join(base, "web");
+      const installWebDir = join(import.meta.dir, "..", "web");
+      const webDir = existsSync(workspaceWebDir) ? workspaceWebDir : installWebDir;
       const url = new URL(req.url);
       let rel = url.pathname === "/" ? "index.html" : url.pathname.replace(/^\/+/, "");
       if (rel.includes("..")) return new Response("not found", { status: 404 });
       const full = join(webDir, rel);
       if (!existsSync(full)) {
-        if (rel === "index.html") return new Response("ginga serve\n", { status: 200 });
+        if (rel === "index.html" && !existsSync(workspaceWebDir) && !existsSync(installWebDir)) {
+          return new Response("ginga serve\n", { status: 200 });
+        }
         return new Response("not found", { status: 404 });
       }
       const ext = rel.split(".").pop()?.toLowerCase();
