@@ -165,6 +165,52 @@ function eventData(row: Record<string, any>): Record<string, any> {
   return data && typeof data === "object" ? (data as Record<string, any>) : env;
 }
 
+type OpenBlocker = {
+  id: string;
+  plan: string | null;
+  task: string | null;
+  data: Record<string, any>;
+};
+
+function listOpenBlockers(db: Database): OpenBlocker[] {
+  const answered = new Set<string>();
+  if (tableExists(db, "answers")) {
+    try {
+      for (const row of db.query('SELECT "blocker_id" FROM answers').all() as Array<Record<string, any>>) {
+        answered.add(String(row.blocker_id));
+      }
+    } catch {
+      // ignore
+    }
+  }
+  try {
+    for (const row of db.query("SELECT id, ts, plan, task, json FROM events WHERE kind = 'answer' ORDER BY ts").all() as Array<Record<string, any>>) {
+      const data = eventData(row);
+      if (typeof data.blocker_id === "string") answered.add(data.blocker_id);
+    }
+  } catch {
+    // ignore
+  }
+
+  const open: OpenBlocker[] = [];
+  try {
+    for (const row of db.query("SELECT id, ts, plan, task, json FROM events WHERE kind = 'blocker' ORDER BY ts").all() as Array<Record<string, any>>) {
+      const data = eventData(row);
+      const blockerId = typeof data.blocker_id === "string" ? data.blocker_id : null;
+      if (!blockerId || answered.has(blockerId)) continue;
+      open.push({
+        id: blockerId,
+        plan: typeof row.plan === "string" ? row.plan : null,
+        task: typeof row.task === "string" ? row.task : null,
+        data,
+      });
+    }
+  } catch {
+    // ignore
+  }
+  return open;
+}
+
 export function deriveBoard(root: string, db: Database): Board {
   const items = listBundle(root);
   const columns: Record<Column, Card[]> = {
@@ -181,6 +227,8 @@ export function deriveBoard(root: string, db: Database): Board {
   const intents = items.filter((i) => i.kind === "intent");
   const specs = items.filter((i) => i.kind === "spec");
   const plans = items.filter((i) => i.kind === "plan");
+  const openBlockers = listOpenBlockers(db);
+  const blockedPlans = new Set(openBlockers.flatMap((b) => (b.plan ? [b.plan] : [])));
 
   // Add intents to INTENT column
   for (const intent of intents) {
@@ -264,10 +312,12 @@ export function deriveBoard(root: string, db: Database): Board {
       repo,
       track: track === "feature" ? "feature" : track === "pequena" ? "pequena" : "feature",
       tasks: { total, pass, running },
-      blocked: false,
+      blocked: blockedPlans.has(plan.id),
     };
 
-    if (plan.status === "approved" || plan.status === "active") {
+    if (plan.status === "done") {
+      columns.FEITO.push(card);
+    } else if (plan.status === "approved" || plan.status === "active") {
       // Check if all done
       if (total > 0 && pass === total) {
         columns.FEITO.push(card);
@@ -284,35 +334,18 @@ export function deriveBoard(root: string, db: Database): Board {
   }
 
   // Blockers abertos (eventos kind=blocker sem answer).
-  const answered = new Set<string>();
-  if (tableExists(db, "answers")) {
-    try {
-      for (const row of db.query('SELECT "blocker_id" FROM answers').all() as Array<Record<string, any>>) {
-        answered.add(String(row.blocker_id));
-      }
-    } catch {
-      // ignore
-    }
-  }
-  try {
-    for (const row of db.query("SELECT id, ts, plan, task, json FROM events WHERE kind = 'blocker' ORDER BY ts").all() as Array<Record<string, any>>) {
-      const data = eventData(row);
-      const blockerId = typeof data.blocker_id === "string" ? data.blocker_id : null;
-      if (!blockerId || answered.has(blockerId)) continue;
-      inbox.push({
-        id: blockerId,
-        type: "blocker",
-        entity: row.plan ?? undefined,
-        title: typeof data.question === "string" ? data.question : blockerId,
-        question: data.question ?? null,
-        raised_by: data.raised_by ?? null,
-        plan: row.plan ?? null,
-        task: row.task ?? null,
-        actions: ["answer"],
-      });
-    }
-  } catch {
-    // ignore
+  for (const blocker of openBlockers) {
+    inbox.push({
+      id: blocker.id,
+      type: "blocker",
+      entity: blocker.plan ?? undefined,
+      title: typeof blocker.data.question === "string" ? blocker.data.question : blocker.id,
+      question: blocker.data.question ?? null,
+      raised_by: blocker.data.raised_by ?? null,
+      plan: blocker.plan,
+      task: blocker.task,
+      actions: ["answer"],
+    });
   }
 
   // Budget cap.
