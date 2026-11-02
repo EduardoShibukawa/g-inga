@@ -101,6 +101,12 @@ function xSnapshotFromArgv(): string {
   return value && !value.startsWith("--") ? value : process.cwd();
 }
 
+function forcedMinimalFromArgv(): boolean | undefined {
+  if (process.argv.includes("--minimal")) return true;
+  if (process.argv.includes("--full")) return false;
+  return undefined;
+}
+
 async function handleXRequest(request: JsonRpcRequest): Promise<unknown> {
   if (request.method === "initialize") {
     return {
@@ -158,9 +164,10 @@ async function handleXRequest(request: JsonRpcRequest): Promise<unknown> {
         };
       }
       if (name === "execute") {
+        const forcedMinimal = forcedMinimalFromArgv();
         const output = await execute(String(args.script ?? ""), {
           snapshot: xSnapshotFromArgv(),
-          minimal: args.minimal === true,
+          minimal: forcedMinimal ?? args.minimal === true,
           run: runBwrap,
         });
         return {

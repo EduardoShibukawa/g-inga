@@ -47,7 +47,10 @@ export interface AgentConfig {
  * @param o - snapshot e repoDir
  * @returns Objeto de configuração JSON
  */
-export function agentConfig(mode: Mode, o: { snapshot: string; repoDir: string }): AgentConfig {
+export function agentConfig(
+  mode: Mode,
+  o: { snapshot: string; repoDir: string; sandbox?: "minimal" | "full" },
+): AgentConfig {
   const { snapshot, repoDir } = o;
   const permission = (bash: "allow" | "deny"): AgentConfig["permission"] => ({
     bash,
@@ -86,14 +89,17 @@ export function agentConfig(mode: Mode, o: { snapshot: string; repoDir: string }
       };
 
     case "X1":
-    case "X2":
+    case "X2": {
+      const command = ["bun", X_SERVER, "--snapshot", snapshot];
+      if (o.sandbox === "minimal") command.push("--minimal");
+      if (o.sandbox === "full") command.push("--full");
       return {
         $schema: "https://opencode.ai/config.json",
         tools: { bash: false, edit: false, write: false },
         mcp: {
           "code-mode-x": {
             type: "local",
-            command: ["bun", X_SERVER, "--snapshot", snapshot],
+            command,
             enabled: true,
           },
         },
@@ -101,5 +107,6 @@ export function agentConfig(mode: Mode, o: { snapshot: string; repoDir: string }
         instructions: [],
         repoDir,
       };
+    }
   }
 }

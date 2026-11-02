@@ -1,6 +1,13 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { processSpawn, runTrial, type Mode, type Spawn, type Trial } from "./runner";
+import {
+  processSpawn,
+  runTrial,
+  type Mode,
+  type Sandbox,
+  type Spawn,
+  type Trial,
+} from "./runner";
 import { TASKS, type CMTask } from "./tasks";
 
 export type Plan = "piloto" | "principal" | "h2" | "h7";
@@ -12,7 +19,7 @@ const FREE_MODELS = [
 const ALL_MODELS = [...FREE_MODELS, "opencode/deepseek-v4-pro"];
 const ALL_MODES: Mode[] = ["M", "C", "X1", "X2"];
 
-type Cell = { task: CMTask; mode: Mode; model: string };
+type Cell = { task: CMTask; mode: Mode; model: string; sandbox?: Sandbox };
 
 function defaultK(plan: Plan): number {
   return plan === "piloto" ? 1 : 3;
@@ -27,8 +34,12 @@ function cellsFor(plan: Plan, k: number): Cell[] {
   for (const task of tasks) {
     for (const mode of modes) {
       for (const model of models) {
-        for (let attempt = 0; attempt < k; attempt += 1) {
-          cells.push({ task, mode, model });
+        const sandboxes: Array<Sandbox | undefined> =
+          plan === "h7" ? ["full", "minimal"] : [undefined];
+        for (const sandbox of sandboxes) {
+          for (let attempt = 0; attempt < k; attempt += 1) {
+            cells.push({ task, mode, model, sandbox });
+          }
         }
       }
     }
@@ -74,6 +85,7 @@ export async function runCells(o: RunCellsOptions): Promise<Trial[]> {
       k,
       snapshot: o.snapshot,
       spawn: o.spawn,
+      sandbox: cell.sandbox,
     });
     trials.push(trial);
     appendFileSync(out, `${JSON.stringify(trial)}\n`);

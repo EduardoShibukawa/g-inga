@@ -1,4 +1,6 @@
-import type { Mode, Trial } from "./runner";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import type { Mode, Sandbox, Trial } from "./runner";
 
 export type Verdict = "adotar" | "rejeitar" | "informativo" | "inconclusivo";
 
@@ -24,6 +26,13 @@ type CellMetrics = {
   latency: number;
   infra: number;
 };
+
+function modelSizeRank(model: string): number {
+  const name = model.toLowerCase();
+  if (name.includes("flash")) return 0;
+  if (name.includes("pro")) return 2;
+  return 1;
+}
 
 function cells(trials: Trial[]): Map<string, Cell> {
   const grouped = new Map<string, Cell>();
@@ -74,8 +83,36 @@ function cell(grouped: Map<string, Cell>, mode: Mode, model: string): CellMetric
   return found ? metrics(found) : undefined;
 }
 
+/** Normaliza o fixture legado da T341; o runner real sempre grava `sandbox`. */
+function normalizedSandboxTrials(trials: Trial[]): Trial[] {
+  const legacyModels = new Set(
+    trials
+      .filter((trial) => trial.mode === "X2" && !trial.sandbox && trial.model.endsWith("-min"))
+      .map((trial) => trial.model.slice(0, -4)),
+  );
+  return trials.map((trial) => {
+    if (trial.sandbox || trial.mode !== "X2") return trial;
+    if (trial.model.endsWith("-min")) {
+      return { ...trial, model: trial.model.slice(0, -4), sandbox: "minimal" as const };
+    }
+    if (legacyModels.has(trial.model)) return { ...trial, sandbox: "full" as const };
+    return trial;
+  });
+}
+
+function sandboxCell(
+  trials: Trial[],
+  model: string,
+  sandbox: Sandbox,
+): CellMetrics | undefined {
+  const matching = trials.filter(
+    (trial) => trial.mode === "X2" && trial.model === model && trial.sandbox === sandbox,
+  );
+  return matching.length > 0 ? metrics({ mode: "X2", model, trials: matching }) : undefined;
+}
+
 export function decide(trials: Trial[]): DecideResult[] {
-  const grouped = cells(trials);
+  const grouped = cells(trials.filter((trial) => trial.sandbox === undefined));
   const results: DecideResult[] = [];
 
   const h1Models = modelsFor(grouped, "M").filter((model) => modelsFor(grouped, "X2").includes(model));
@@ -109,18 +146,28 @@ export function decide(trials: Trial[]): DecideResult[] {
     })
     .sort((a, b) => a.difference - b.difference);
   const h3Closest = h3Difference[0];
+  const h3Subtask =
+    h3Closest !== undefined && h3Closest.difference > 0 && h3Closest.difference < 1;
   results.push({
     h: "H3",
-    verdict: h3Closest && h3Closest.difference <= 1 ? "adotar" : h3Models.length === 0 ? "inconclusivo" : "rejeitar",
+    verdict: h3Subtask
+      ? "inconclusivo"
+      : h3Closest && h3Closest.difference <= 1
+        ? "adotar"
+        : h3Models.length === 0
+          ? "inconclusivo"
+          : "rejeitar",
     evidence: h3Closest
-      ? `${h3Closest.model}: diferença C/X2 = ${h3Closest.difference.toFixed(1)} task(s); não criar execute`
+      ? h3Subtask
+        ? `${h3Closest.model}: diferença C/X2 = ${h3Closest.difference.toFixed(1)} task(s), menor que 1 task; inconclusivo`
+        : `${h3Closest.model}: diferença C/X2 = ${h3Closest.difference.toFixed(1)} task(s); não criar execute`
       : "sem pares C/X2 do mesmo modelo",
   });
 
   const h4Candidates = modelsFor(grouped, "X2")
     .map((model) => ({ model, metrics: cell(grouped, "X2", model)! }))
     .filter(({ metrics: value }) => value.reward >= 0.8)
-    .sort((a, b) => a.metrics.tokensIn - b.metrics.tokensIn || a.model.localeCompare(b.model));
+    .sort((a, b) => modelSizeRank(a.model) - modelSizeRank(b.model) || a.model.localeCompare(b.model));
   const h4Best = h4Candidates[0];
   results.push({
     h: "H4",
@@ -143,13 +190,19 @@ export function decide(trials: Trial[]): DecideResult[] {
     evidence: `Oracle resolveu ${oracleTasks.size}/10 tasks`,
   });
 
-  const h7Pairs = modelsFor(grouped, "X2")
-    .filter((model) => !model.endsWith("-min"))
-    .flatMap((model) => {
-      const minimal = cell(grouped, "X2", `${model}-min`);
-      const full = cell(grouped, "X2", model);
-      return minimal && full ? [{ model, minimal, full }] : [];
-    });
+  const h7Trials = normalizedSandboxTrials(trials);
+  const h7Models = [
+    ...new Set(
+      h7Trials
+        .filter((trial) => trial.mode === "X2" && trial.sandbox !== undefined)
+        .map((trial) => trial.model),
+    ),
+  ];
+  const h7Pairs = h7Models.flatMap((model) => {
+    const minimal = sandboxCell(h7Trials, model, "minimal");
+    const full = sandboxCell(h7Trials, model, "full");
+    return minimal && full ? [{ model, minimal, full }] : [];
+  });
   const h7Passed = h7Pairs.find(
     ({ minimal, full }) =>
       full.tokensIn > 0 && minimal.tokensIn <= 0.85 * full.tokensIn && minimal.reward === full.reward,
@@ -158,7 +211,7 @@ export function decide(trials: Trial[]): DecideResult[] {
     h: "H7",
     verdict: h7Pairs.length === 0 ? "inconclusivo" : h7Passed ? "adotar" : "rejeitar",
     evidence: h7Passed
-      ? `${h7Passed.model}-min usou ≤ 0,85× os tokens e manteve o reward`
+      ? `${h7Passed.model}: sandbox minimal usou ≤ 0,85× os tokens de full e manteve o reward`
       : h7Pairs.length === 0
         ? "sem pares X2 mínimo/FS completo"
         : "nenhum par X2 mínimo/FS completo satisfaz tokens ≤ 0,85× com o mesmo reward",
@@ -184,4 +237,42 @@ export function renderReport(trials: Trial[]): string {
   }
 
   return lines.join("\n");
+}
+
+function readTrials(path: string): Trial[] {
+  const text = readFileSync(resolve(path), "utf8");
+  return text
+    .split(/\r?\n/)
+    .filter((line) => line.trim().length > 0)
+    .map((line, index) => {
+      try {
+        const value = JSON.parse(line) as Trial;
+        if (!value || typeof value !== "object" || typeof value.task !== "string") {
+          throw new Error("trial sem task");
+        }
+        return value;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`results inválido na linha ${index + 1}: ${message}`);
+      }
+    });
+}
+
+function main(): void {
+  const path = process.argv[2] ?? "results.jsonl";
+  const trials = readTrials(path);
+  console.log(renderReport(trials));
+  console.log("");
+  for (const result of decide(trials)) {
+    console.log(`${result.h}: ${result.verdict} — ${result.evidence}`);
+  }
+}
+
+if (import.meta.main) {
+  try {
+    main();
+  } catch (error: unknown) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }

@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { type CMTask, verify } from "./tasks";
 
 export type Mode = "M" | "C" | "X1" | "X2" | "O";
+export type Sandbox = "minimal" | "full";
 
 export type Trial = {
   task: string;
@@ -26,6 +27,7 @@ export type Trial = {
   cost_usd: number;
   latency_ms: number;
   infra: boolean;
+  sandbox?: Sandbox;
   session_id?: string;
 };
 
@@ -252,16 +254,24 @@ function copySnapshot(snapshot: string, workdir: string): void {
   }
 }
 
-async function writeModeConfig(mode: Mode, snapshot: string, workdir: string): Promise<void> {
+async function writeModeConfig(
+  mode: Mode,
+  snapshot: string,
+  workdir: string,
+  sandbox?: Sandbox,
+): Promise<void> {
   let config: Record<string, unknown>;
   const configModule = join(import.meta.dir, "config.ts");
   if (existsSync(configModule)) {
     const moduleName = "./config";
     const loaded = (await import(moduleName)) as {
-      agentConfig?: (mode: Mode, o: { snapshot: string; repoDir: string }) => object;
+      agentConfig?: (
+        mode: Mode,
+        o: { snapshot: string; repoDir: string; sandbox?: Sandbox },
+      ) => object;
     };
     if (!loaded.agentConfig) throw new Error("config.ts sem agentConfig");
-    config = loaded.agentConfig(mode, { snapshot, repoDir: workdir }) as Record<string, unknown>;
+    config = loaded.agentConfig(mode, { snapshot, repoDir: workdir, sandbox }) as Record<string, unknown>;
   } else {
     config = {
       $schema: "https://opencode.ai/config.json",
@@ -300,6 +310,7 @@ export async function runTrial(o: {
   k: number;
   snapshot: string;
   spawn: Spawn;
+  sandbox?: Sandbox;
 }): Promise<Trial> {
   const started = Date.now();
   const workdir = mkdtempSync(join(tmpdir(), "code-mode-trial-"));
@@ -315,11 +326,12 @@ export async function runTrial(o: {
     cost_usd: 0,
     latency_ms: 0,
     infra: false,
+    ...(o.sandbox ? { sandbox: o.sandbox } : {}),
   };
 
   try {
     copySnapshot(o.snapshot, workdir);
-    await writeModeConfig(o.mode, workdir, workdir);
+    await writeModeConfig(o.mode, workdir, workdir, o.sandbox);
 
     let run: Awaited<ReturnType<Spawn>>;
     try {
