@@ -7,7 +7,7 @@ plan: PLAN-0012-roda-web
 repo: ginga
 depends_on: [TASK-06-index-gerado]
 tier: free
-touch: [src/verbs/registry.ts, src/verbs/index.ts, src/index_md.ts, src/serve.ts, tests/index_cli.test.ts, tests/fixtures/index/]
+touch: [src/verbs/registry.ts, src/verbs/index.ts, src/index_md.ts, src/serve.ts, tests/index_cli.test.ts, tests/fixtures/index/, tests/cli_verbs.test.ts]
 done_when: "bun test tests/index_cli.test.ts"
 tests_frozen: [tests/index_cli.test.ts, tests/fixtures/index/template.md]
 pinga_task: T331

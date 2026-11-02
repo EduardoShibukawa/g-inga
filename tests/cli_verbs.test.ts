@@ -91,6 +91,7 @@ const CASES: Record<string, { argv: string[]; args: Record<string, string>; via?
   board: { argv: ["board"], args: {} },
   inbox: { argv: ["inbox"], args: {} },
   watch: { argv: ["watch", "PLAN-0001"], args: { target: "PLAN-0001" } },
+  index: { argv: ["index"], args: {} },
   // Operação (PLAN-0015 TASK-03; cobertura TASK-07): tty-guards via `api`, delegações com stub no PATH.
   ctl: { argv: ["ctl"], args: {}, via: "api" },
   web: { argv: ["web", "status"], args: { action: "status" } },
