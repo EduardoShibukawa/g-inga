@@ -9,7 +9,7 @@ touch:
   - tests/fixtures/metrics/
 tests_frozen:
   - tests/metrics.test.ts
-  - tests/fixtures/metrics/
+  - tests/fixtures/metrics/events.jsonl
 ---
 ## Context
 - PLAN-0014 TASK-01. `computeMetrics(db, {since?})` em `src/metrics.ts` → `Metrics` (interface no PLAN.md):
