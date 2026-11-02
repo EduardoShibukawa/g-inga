@@ -23,6 +23,7 @@ import { routeEvents } from "./notify/router.ts";
 import { send as portSend } from "./notify/port.ts";
 import { openStateDb, resolveStateDbPath } from "./state/db.ts";
 import { ingestEvents } from "./state/ingest.ts";
+import { writeIndex } from "./index_md.ts";
 import { startApi } from "./api/server.ts";
 
 /** Bind sem auth (TASK-04): só loopback; fora daqui, só com credencial. */
@@ -228,6 +229,19 @@ export function makeTickRunner(root: string): () => void {
       runWatch(watchArgs);
     } catch (e) {
       console.error(`serve: watch falhou: ${(e as Error).message}`);
+    }
+    // PLAN-0012 TASK-06/14: regenera o .ginga/index.md a cada tick (o watcher
+    // de $GINGA_EVENTS acorda o tick em cada evento, inclusive `transition`).
+    // writeIndex não grava nada se o conteúdo for idêntico.
+    try {
+      const db = openStateDb(resolveStateDbPath(root));
+      try {
+        writeIndex(root, db);
+      } finally {
+        db.close();
+      }
+    } catch (e) {
+      console.error(`serve: regenerar index falhou: ${(e as Error).message}`);
     }
     try {
       await routePending(root);
