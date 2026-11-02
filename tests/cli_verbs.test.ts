@@ -121,6 +121,7 @@ const CASES: Record<string, VerbCase> = {
     args: (fx) => ({ db: fx.opencodeDb }),
   },
   cost: { argv: ["cost"], args: {}, seedCost: true },
+  quota: { argv: ["quota"], args: {} },
   index: { argv: ["index"], args: {} },
   // Operação (PLAN-0015 TASK-03; cobertura TASK-07): tty-guards via `api`, delegações com stub no PATH.
   ctl: { argv: ["ctl"], args: {}, via: "api" },
