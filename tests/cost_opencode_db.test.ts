@@ -68,8 +68,9 @@ describe("PLAN-0014 TASK-07 — custo real no opencode.db", () => {
   test("schema sem cost falha com OpencodeSchemaError", async () => {
     const mod = await loadCostModule();
     expect(mod).not.toBeNull();
-    const path = mkdtempSync(join(tmpdir(), "ginga-opencode-bad-"));
-    dirs.push(path);
+    const dir = mkdtempSync(join(tmpdir(), "ginga-opencode-bad-"));
+    dirs.push(dir);
+    const path = join(dir, "opencode.db");
     const db = new Database(path);
     db.run("CREATE TABLE session_v2(id TEXT PRIMARY KEY)");
     db.close();
