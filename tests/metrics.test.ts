@@ -4,13 +4,15 @@
 //   evento cost próprio (4.0) que deve vencer attempt.cost_usd (1.0), T-B falha done_when
 //   (medium) e passa na 2ª (strong, escalation), T-C falha quota_exhausted e passa na 2ª,
 //   T-D só falha infra. + 1 evento cost de sessão (escopo call, sem task).
+// Import dinâmico para o RED falhar por asserção (módulo ausente), não por erro de resolução.
 
 import { afterEach, describe, expect, test } from "bun:test";
+import type { Database } from "bun:sqlite";
 import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStateDb } from "../src/state/db";
-import { computeMetrics } from "../src/metrics";
+import type { Metrics } from "../src/metrics";
 
 const ROOT = join(import.meta.dir, "..");
 const dirs: string[] = [];
@@ -18,6 +20,12 @@ const dirs: string[] = [];
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
+
+async function loadComputeMetrics(): Promise<(db: Database, o?: { since?: string }) => Metrics> {
+  const mod = await import("../src/metrics").catch(() => null);
+  expect(mod).not.toBeNull();
+  return (mod as unknown as { computeMetrics: (db: Database, o?: { since?: string }) => Metrics }).computeMetrics;
+}
 
 function loadFixtureDb(): string {
   const dir = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), "ginga-metrics-")));
@@ -37,7 +45,8 @@ function loadFixtureDb(): string {
 }
 
 describe("PLAN-0014 TASK-01 — computeMetrics", () => {
-  test("FTPR por modelo/tier/all exclui attempts quota_exhausted e infra; custo do evento cost vence attempt.cost_usd", () => {
+  test("FTPR por modelo/tier/all exclui attempts quota_exhausted e infra; custo do evento cost vence attempt.cost_usd", async () => {
+    const computeMetrics = await loadComputeMetrics();
     const db = openStateDb(loadFixtureDb());
     const m = computeMetrics(db);
     db.close();
@@ -55,7 +64,8 @@ describe("PLAN-0014 TASK-01 — computeMetrics", () => {
     expect(m.escalations).toBe(1); // T-B medium → strong
   });
 
-  test("--since filtra eventos pelo ts (T-OLD de 2026-10 cai fora)", () => {
+  test("--since filtra eventos pelo ts (T-OLD de 2026-10 cai fora)", async () => {
+    const computeMetrics = await loadComputeMetrics();
     const db = openStateDb(loadFixtureDb());
     const m = computeMetrics(db, { since: "2026-11-01T00:00:00.000Z" });
     db.close();
@@ -70,7 +80,8 @@ describe("PLAN-0014 TASK-01 — computeMetrics", () => {
     expect(m.escalations).toBe(1);
   });
 
-  test("banco vazio devolve zeros sem quebrar", () => {
+  test("banco vazio devolve zeros sem quebrar", async () => {
+    const computeMetrics = await loadComputeMetrics();
     const dir = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), "ginga-metrics-")));
     dirs.push(dir);
     const db = openStateDb(join(dir, "state.db"));
