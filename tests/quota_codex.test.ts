@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
-  cpFileSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -50,7 +50,7 @@ describe("PLAN-0014 TASK-02 — quota do Codex", () => {
 
     const home = makeHome();
     const rollout = rolloutPath(home, "02", "rollout-2026-11-02T00-00-00-test.jsonl");
-    cpFileSync(FIXTURE, rollout);
+    copyFileSync(FIXTURE, rollout);
     const events = join(home, "events.jsonl");
     process.env.GINGA_EVENTS = events;
 
@@ -85,7 +85,7 @@ describe("PLAN-0014 TASK-02 — quota do Codex", () => {
     const home = makeHome();
     const oldPath = rolloutPath(home, "01", "rollout-2026-11-01T00-00-00-test.jsonl");
     const newPath = rolloutPath(home, "03", "rollout-2026-11-03T00-00-00-test.jsonl");
-    cpFileSync(FIXTURE, oldPath);
+    copyFileSync(FIXTURE, oldPath);
     writeFileSync(
       newPath,
       JSON.stringify({
