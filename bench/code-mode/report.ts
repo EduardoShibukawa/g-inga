@@ -34,6 +34,10 @@ function modelSizeRank(model: string): number {
   return 1;
 }
 
+function isSubtaskDifference(difference: number): boolean {
+  return difference > 1e-9 && difference < 1 - 1e-9;
+}
+
 function cells(trials: Trial[]): Map<string, Cell> {
   const grouped = new Map<string, Cell>();
   for (const trial of trials) {
@@ -116,19 +120,39 @@ export function decide(trials: Trial[]): DecideResult[] {
   const results: DecideResult[] = [];
 
   const h1Models = modelsFor(grouped, "M").filter((model) => modelsFor(grouped, "X2").includes(model));
-  const h1Passed = h1Models.find((model) => {
+  const h1Candidates = h1Models.map((model) => {
     const m = cell(grouped, "M", model)!;
     const x2 = cell(grouped, "X2", model)!;
-    return m.tokensIn > 0 && x2.tokensIn <= 0.7 * m.tokensIn && x2.reward * 10 >= m.reward * 10 - 1;
+    const difference = Math.abs(m.reward - x2.reward) * 10;
+    return {
+      model,
+      difference,
+      tokensPass: m.tokensIn > 0 && x2.tokensIn <= 0.7 * m.tokensIn,
+      subtask: isSubtaskDifference(difference),
+    };
   });
+  const h1Passed = h1Candidates.find(
+    (candidate) => candidate.tokensPass && candidate.difference <= 1 && !candidate.subtask,
+  );
+  const h1Subtask = h1Candidates.find(
+    (candidate) => candidate.tokensPass && candidate.subtask,
+  );
   results.push({
     h: "H1",
-    verdict: h1Models.length === 0 ? "inconclusivo" : h1Passed ? "adotar" : "rejeitar",
+    verdict: h1Models.length === 0
+      ? "inconclusivo"
+      : h1Passed
+        ? "adotar"
+        : h1Subtask
+          ? "inconclusivo"
+          : "rejeitar",
     evidence: h1Passed
-      ? `${h1Passed}: X2 usou ≤ 0,7× os tokens de M e perdeu no máximo 1 task`
-      : h1Models.length === 0
-        ? "sem pares M/X2 do mesmo modelo"
-        : "nenhum par M/X2 satisfaz tokens ≤ 0,7× e reward ≥ M − 1 task",
+      ? `${h1Passed.model}: X2 usou ≤ 0,7× os tokens de M e perdeu no máximo 1 task`
+      : h1Subtask
+        ? `${h1Subtask.model}: diferença M/X2 = ${h1Subtask.difference.toFixed(1)} task(s), menor que 1 task; inconclusivo`
+        : h1Models.length === 0
+          ? "sem pares M/X2 do mesmo modelo"
+          : "nenhum par M/X2 satisfaz tokens ≤ 0,7× e reward ≥ M − 1 task",
   });
 
   results.push({
@@ -147,7 +171,7 @@ export function decide(trials: Trial[]): DecideResult[] {
     .sort((a, b) => a.difference - b.difference);
   const h3Closest = h3Difference[0];
   const h3Subtask =
-    h3Closest !== undefined && h3Closest.difference > 0 && h3Closest.difference < 1;
+    h3Closest !== undefined && isSubtaskDifference(h3Closest.difference);
   results.push({
     h: "H3",
     verdict: h3Subtask
