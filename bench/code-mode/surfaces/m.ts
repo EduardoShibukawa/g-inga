@@ -21,10 +21,22 @@ export type MTool = {
   run: (snapshot: string, args?: any) => unknown;
 };
 
+const OUTPUT_LIMIT = 8000;
+
+function truncateOutput(value: unknown): unknown {
+  if (typeof value === "string") {
+    return value.length > OUTPUT_LIMIT ? `${value.slice(0, OUTPUT_LIMIT)}...[truncated]` : value;
+  }
+  if (value === null || value === undefined) return value;
+  const encoded = JSON.stringify(value);
+  return encoded.length > OUTPUT_LIMIT ? `${encoded.slice(0, OUTPUT_LIMIT)}...[truncated]` : value;
+}
+
 export const M_TOOLS: MTool[] = TOOLS12.map((name) => ({
   name,
   run: (snapshot: string, args?: any) => {
-    switch (name) {
+    const value = (() => {
+      switch (name) {
       case "list_plans": {
         const plansDir = join(snapshot, "plans");
         const names: string[] = [];
@@ -181,9 +193,11 @@ export const M_TOOLS: MTool[] = TOOLS12.map((name) => ({
         }
         return attempts;
       }
-      default:
-        return null;
-    }
+        default:
+          return null;
+      }
+    })();
+    return truncateOutput(value);
   },
 }));
 
