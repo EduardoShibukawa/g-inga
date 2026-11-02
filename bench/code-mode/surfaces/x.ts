@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -67,3 +68,152 @@ export async function execute(
     rmSync(dir, { recursive: true, force: true });
   }
 }
+
+function runBwrap(argv: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(argv[0]!, argv.slice(1), { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve(stdout);
+      else reject(new Error(stderr.trim() || `bwrap saiu com ${code ?? "sinal"}`));
+    });
+  });
+}
+
+type JsonRpcRequest = {
+  jsonrpc: "2.0";
+  id: number | string | null;
+  method: string;
+  params?: any;
+};
+
+function xSnapshotFromArgv(): string {
+  const index = process.argv.indexOf("--snapshot");
+  const value = index >= 0 ? process.argv[index + 1] : undefined;
+  return value && !value.startsWith("--") ? value : process.cwd();
+}
+
+async function handleXRequest(request: JsonRpcRequest): Promise<unknown> {
+  if (request.method === "initialize") {
+    return {
+      jsonrpc: "2.0",
+      id: request.id,
+      result: {
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: {} },
+        serverInfo: { name: "ginga-code-mode-x", version: "0.1.0" },
+      },
+    };
+  }
+
+  if (request.method === "tools/list") {
+    return {
+      jsonrpc: "2.0",
+      id: request.id,
+      result: {
+        tools: [
+          {
+            name: "search_tools",
+            description: "Lista assinaturas da API de leitura disponível ao script",
+            inputSchema: {
+              type: "object",
+              properties: { query: { type: "string" } },
+            },
+          },
+          {
+            name: "execute",
+            description: "Executa um script Bun dentro do bwrap e devolve a saída truncada",
+            inputSchema: {
+              type: "object",
+              properties: {
+                script: { type: "string" },
+                minimal: { type: "boolean" },
+              },
+              required: ["script"],
+            },
+          },
+        ],
+      },
+    };
+  }
+
+  if (request.method === "tools/call") {
+    const name = request.params?.name;
+    const args = request.params?.arguments ?? {};
+    try {
+      if (name === "search_tools") {
+        const found = search_tools(String(args.query ?? ""));
+        return {
+          jsonrpc: "2.0",
+          id: request.id,
+          result: { content: [{ type: "text", text: JSON.stringify(found) }] },
+        };
+      }
+      if (name === "execute") {
+        const output = await execute(String(args.script ?? ""), {
+          snapshot: xSnapshotFromArgv(),
+          minimal: args.minimal === true,
+          run: runBwrap,
+        });
+        return {
+          jsonrpc: "2.0",
+          id: request.id,
+          result: { content: [{ type: "text", text: output }] },
+        };
+      }
+      return {
+        jsonrpc: "2.0",
+        id: request.id,
+        error: { code: -32601, message: `Unknown tool: ${name}` },
+      };
+    } catch (error) {
+      return {
+        jsonrpc: "2.0",
+        id: request.id,
+        error: { code: -32000, message: error instanceof Error ? error.message : String(error) },
+      };
+    }
+  }
+
+  return {
+    jsonrpc: "2.0",
+    id: request.id,
+    error: { code: -32600, message: `Method not found: ${request.method}` },
+  };
+}
+
+function serveStdio(): void {
+  let buffer = "";
+  const consume = async (line: string): Promise<void> => {
+    if (!line.trim()) return;
+    try {
+      const request = JSON.parse(line) as JsonRpcRequest;
+      const response = await handleXRequest(request);
+      process.stdout.write(`${JSON.stringify(response)}\n`);
+    } catch {
+      process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } })}\n`);
+    }
+  };
+
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk: string) => {
+    buffer += chunk;
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) void consume(line);
+  });
+  process.stdin.on("end", () => {
+    if (buffer.trim()) void consume(buffer);
+  });
+  process.stdin.resume();
+}
+
+if (import.meta.main) serveStdio();
