@@ -6,6 +6,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { listAlerts, type AlertSeverity } from "../alerts";
 import { deriveBoard } from "../board";
+import { computeMetrics } from "../metrics";
 import { buildStatus } from "../status";
 import { fmGet } from "./write";
 import type { VerbArgs, VerbCtx } from "./registry";
@@ -94,6 +95,11 @@ function alertSeverity(value: string | undefined): AlertSeverity | undefined {
 export function alerts(ctx: VerbCtx, args: VerbArgs): unknown {
   const minSeverity = alertSeverity(args.sev);
   return { items: listAlerts(ctx.db, { minSeverity }) };
+}
+
+/** metrics: FTPR, custo verificado, falhas e escaladas a partir do state.db. */
+export function metrics(ctx: VerbCtx, args: VerbArgs): unknown {
+  return computeMetrics(ctx.db, { since: args.since });
 }
 
 /** watch: histórico do alvo no state.db — PLAN-NNNN, TASK-NN ou PLAN-NNNN/TASK-NN. */
