@@ -1,0 +1,15 @@
+{
+  "info": {
+    "id": "ses_fixexport0000000000001",
+    "model": { "id": "glm-5.3-flash-free", "providerID": "opencode" },
+    "cost": 0.0000494,
+    "tokens": { "input": 14810, "output": 104, "reasoning": 85, "cache": { "read": 16320, "write": 0 } },
+    "outcome": "succeeded"
+  },
+  "messages": [
+    { "type": "user", "text": "pergunta sintetica" },
+    { "type": "assistant", "text": "resposta parcial" },
+    { "type": "user", "text": "continua" },
+    { "type": "assistant", "text": "\"approved\"" }
+  ]
+}
