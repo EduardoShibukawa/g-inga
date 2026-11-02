@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -29,12 +29,13 @@ describe("PLAN-0016 TASK-07: snapshot sintético em checkout limpo", () => {
         ["checkout-index", "--all", `--prefix=${exportDir}${"/"}`],
         { cwd: ROOT, stdio: "pipe" },
       );
-      const result = execFileSync(
+      const result = spawnSync(
         process.execPath,
         ["test", "tests/code_mode/oracle.test.ts", "tests/code_mode/surface_m.test.ts"],
-        { cwd: exportDir, encoding: "utf8", stdio: "pipe" },
+        { cwd: exportDir, encoding: "utf8" },
       );
-      expect(result).toContain("0 fail");
+      expect(result.status).toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("0 fail");
     } finally {
       rmSync(exportDir, { recursive: true, force: true });
     }
