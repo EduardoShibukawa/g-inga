@@ -54,6 +54,7 @@ export const VERBS: Verb[] = [
   { name: "cost sync", args: [arg("since"), arg("db")], write: true, run: costSync },
   { name: "cost", args: [], write: false, run: costSummary },
   { name: "quota", args: [], write: false, run: quota },
+  { name: "metrics", args: [arg("since")], write: false, run: read.metrics },
   // PLAN-0012 TASK-06/14: gera o index.md do bundle; --check só confere (exit 1 se desatualizado).
   { name: "index", args: [{ name: "check", bool: true }], write: true, run: indexVerb },
   // Operação (PLAN-0015 TASK-03): equivalente para cada subcomando do
