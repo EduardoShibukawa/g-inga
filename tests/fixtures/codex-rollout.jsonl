@@ -1,0 +1,2 @@
+{"timestamp":"2026-11-02T00:00:00.000Z","type":"event_msg","rate_limits":{"primary":{"used_percent":12.5,"window_minutes":300,"resets_at":"2026-11-02T15:00:00Z"}}}
+{"timestamp":"2026-11-02T00:01:00.000Z","type":"event_msg","rate_limits":{"primary":{"used_percent":37.5,"window_minutes":300,"resets_at":"2026-11-03T00:00:00Z"}}}

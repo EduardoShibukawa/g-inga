@@ -12,10 +12,12 @@
 // arquivo como worker (sync fachada → `bun src/tick.ts tick …`).
 
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { Database } from "bun:sqlite";
 import { emitEvent } from "./events/emit.ts";
 import { getPhase, setPhase } from "./plan_phase.ts";
+import { quotaCapOk, readQuotas } from "./quota/index.ts";
 import { nextAction } from "./tick_plan.ts";
 
 /** TTL do lease; vencido, outro tick pode assumir a TASK. */
@@ -590,7 +592,7 @@ async function runTickPass(
         const action = nextAction({
           phase: planPhase.phase,
           tasks: tasksState,
-          cap_ok: true, // assume ok for now
+          cap_ok: quotaCapOk(readQuotas({ home: process.env.HOME ?? homedir(), db })),
           judge: readJudgeVerdict(base, plan),
         });
         if (action.cmd === "none" || action.cmd === "notify") continue;

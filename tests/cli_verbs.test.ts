@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,10 +24,10 @@ afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-type Fx = { dir: string; root: string; db: string; events: string; ctx: VerbCtx };
+type Fx = { dir: string; root: string; db: string; events: string; opencodeDb: string; ctx: VerbCtx };
 
 /** Bundle + state.db idênticos a cada chamada (só o caminho muda). */
-function fixture(): Fx {
+function fixture(seedCost = false): Fx {
   const dir = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), "ginga-cliverbs-")));
   dirs.push(dir);
   const root = join(dir, "bundle");
@@ -48,7 +49,22 @@ function fixture(): Fx {
     .query("INSERT INTO events(id, ts, kind, plan, task, json) VALUES('01', '2026-10-29T00:00:00Z', 'blocker', 'PLAN-0001', 'TASK-01', ?)")
     .run(JSON.stringify({ data: { blocker_id: "b1", question: "rotação?", raised_by: "manda" } }));
   conn.query("INSERT INTO task_exec(plan, task, status, attempts) VALUES('PLAN-0001', 'TASK-01', 'failed', 2)").run();
-  return { dir, root, db, events: join(dir, "events.jsonl"), ctx: { by: "eduardo", via: "cli", root, db: conn } };
+  if (seedCost) {
+    conn
+      .query("INSERT INTO events(id, ts, kind, plan, task, json) VALUES('02', '2026-11-02T00:00:00Z', 'cost', NULL, NULL, ?)")
+      .run(JSON.stringify({ data: { amount_usd: 0.25, model: "opencode/glm-5.3-flash" } }));
+  }
+
+  // Fonte temporária e mínima para `cost sync`; o opencode.db real nunca é aberto.
+  const opencodeDb = join(dir, "opencode.db");
+  const source = new Database(opencodeDb);
+  source.run("CREATE TABLE session_v2(id TEXT PRIMARY KEY, cost REAL NOT NULL, tokens_input INTEGER NOT NULL, tokens_output INTEGER NOT NULL, time_created INTEGER NOT NULL, directory TEXT NOT NULL)");
+  source.run("CREATE TABLE session_message(id TEXT PRIMARY KEY, session_id TEXT NOT NULL, seq INTEGER NOT NULL, time_created INTEGER NOT NULL, data TEXT NOT NULL)");
+  source.run("INSERT INTO session_v2(id, cost, tokens_input, tokens_output, time_created, directory) VALUES('ses-cli', 0.25, 100, 20, 1700000000000, '/workspace/cli')");
+  source.run("INSERT INTO session_message(id, session_id, seq, time_created, data) VALUES('msg-cli', 'ses-cli', 1, 1700000000000, '{\"model\":{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode\"}}')");
+  source.close();
+
+  return { dir, root, db, events: join(dir, "events.jsonl"), opencodeDb, ctx: { by: "eduardo", via: "cli", root, db: conn } };
 }
 
 function cli(fx: Fx, argv: string[]) {
@@ -73,7 +89,15 @@ function stubBin(names: string[]): string {
 // Um caso por verbo do registro: argv posicional (+ flags) e os args equivalentes do `run`.
 // `via` força o mesmo ctx dos dois lados (ctl/tui/hermes/hud só agem em CLI com tty);
 // `bin` prepõe stubs no PATH para os que delegam a binários externos.
-const CASES: Record<string, { argv: string[]; args: Record<string, string>; via?: string; bin?: string[] }> = {
+type VerbCase = {
+  argv: string[] | ((fx: Fx) => string[]);
+  args: Record<string, string> | ((fx: Fx) => Record<string, string>);
+  via?: string;
+  bin?: string[];
+  seedCost?: boolean;
+};
+
+const CASES: Record<string, VerbCase> = {
   "intent new": { argv: ["intent", "new", "Quero login com OAuth"], args: { text: "Quero login com OAuth" } },
   approve: { argv: ["approve", "PLAN-0001"], args: { id: "PLAN-0001" } },
   reject: { argv: ["reject", "SPEC-0001", "escopo grande"], args: { id: "SPEC-0001", reason: "escopo grande" } },
@@ -92,6 +116,13 @@ const CASES: Record<string, { argv: string[]; args: Record<string, string>; via?
   inbox: { argv: ["inbox"], args: {} },
   alerts: { argv: ["alerts"], args: {} },
   watch: { argv: ["watch", "PLAN-0001"], args: { target: "PLAN-0001" } },
+  "cost sync": {
+    argv: (fx) => ["cost", "sync", "--db", fx.opencodeDb],
+    args: (fx) => ({ db: fx.opencodeDb }),
+  },
+  cost: { argv: ["cost"], args: {}, seedCost: true },
+  quota: { argv: ["quota"], args: {} },
+  metrics: { argv: ["metrics"], args: {} },
   index: { argv: ["index"], args: {} },
   // Operação (PLAN-0015 TASK-03; cobertura TASK-07): tty-guards via `api`, delegações com stub no PATH.
   ctl: { argv: ["ctl"], args: {}, via: "api" },
@@ -116,15 +147,17 @@ describe("CLI gerada do registro", () => {
   for (const verb of VERBS) {
     test(`ginga ${verb.name} --json devolve o mesmo JSON que o run direto`, async () => {
       const c = CASES[verb.name]!;
-      const viaCli = fixture();
-      const direct = fixture();
+      const viaCli = fixture(c.seedCost);
+      const direct = fixture(c.seedCost);
       const origPath = process.env.PATH ?? "";
       if (c.bin) process.env.PATH = `${stubBin(c.bin)}:${origPath}`;
       try {
-        const r = cli(viaCli, [...c.argv, "--by", "eduardo", "--json", ...(c.via ? ["--via", c.via] : [])]);
+        const argv = typeof c.argv === "function" ? c.argv(viaCli) : c.argv;
+        const args = typeof c.args === "function" ? c.args(direct) : c.args;
+        const r = cli(viaCli, [...argv, "--by", "eduardo", "--json", ...(c.via ? ["--via", c.via] : [])]);
         expect(r.err).toBe("");
         expect(r.code).toBe(0);
-        const expected = await runVerb(verb.name, { ...direct.ctx, via: c.via ?? "cli" }, c.args);
+        const expected = await runVerb(verb.name, { ...direct.ctx, via: c.via ?? "cli" }, args);
         expect(JSON.parse(r.out)).toEqual(JSON.parse(JSON.stringify(expected)));
       } finally {
         process.env.PATH = origPath;
