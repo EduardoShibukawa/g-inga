@@ -10,13 +10,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function normalizeResetsAt(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return new Date(value >= 1e12 ? value : value * 1000).toISOString();
+}
+
 function readWindow(value: unknown): ClaudeWindow | null {
   if (!isRecord(value)) return null;
   const used = value.used_percent;
   const resets = value.resets_at;
   return {
     used_percent: typeof used === "number" && Number.isFinite(used) ? used : null,
-    resets_at: typeof resets === "string" ? resets : null,
+    resets_at: normalizeResetsAt(resets),
   };
 }
 

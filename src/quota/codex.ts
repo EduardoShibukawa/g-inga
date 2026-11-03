@@ -33,6 +33,12 @@ function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function normalizeResetsAt(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return new Date(value >= 1e12 ? value : value * 1000).toISOString();
+}
+
 /** Procura o rollout mais recente por mtime, sem seguir links de diretório. */
 function latestRollout(sessions: string): string | null {
   let newest: { path: string; mtime: number } | null = null;
@@ -83,7 +89,7 @@ function primaryLimits(record: unknown): PrimaryLimits | null {
   return {
     used_percent: finiteNumber(primary.used_percent),
     window_minutes: finiteNumber(primary.window_minutes),
-    resets_at: typeof primary.resets_at === "string" ? primary.resets_at : null,
+    resets_at: normalizeResetsAt(primary.resets_at),
   };
 }
 
