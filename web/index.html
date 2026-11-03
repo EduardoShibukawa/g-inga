@@ -11,6 +11,7 @@
   <script type="module" src="/board.js"></script>
   <script type="module" src="/plan.js"></script>
   <script type="module" src="/alerts.js"></script>
+  <script type="module" src="/metrics.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Pular para o conteúdo</a>
@@ -38,6 +39,12 @@
         </a>
         <a href="#alerts" data-view="alerts" aria-controls="view-alerts">
           <span>Alertas</span>
+        </a>
+        <a href="#metrics" data-view="metrics" aria-controls="view-metrics">
+          <span>Métricas</span>
+        </a>
+        <a href="#quota" data-view="quota" aria-controls="view-quota">
+          <span>Quota</span>
         </a>
       </nav>
 
@@ -123,6 +130,32 @@
               <span class="alerts-count" data-count>—</span>
             </div>
             <ul class="alerts-list" data-alerts-list></ul>
+          </div>
+        </section>
+
+        <section id="view-metrics" class="view" data-view="metrics" aria-labelledby="title-metrics" hidden>
+          <header class="view-header">
+            <div>
+              <p class="eyebrow">Desempenho do workspace</p>
+              <h1 id="title-metrics">Métricas</h1>
+            </div>
+            <p class="view-description">Execuções, falhas, FTPR e custos das TASKs verificadas.</p>
+          </header>
+          <div class="panel" data-metrics aria-live="polite">
+            <p class="empty-state">Carregando as métricas…</p>
+          </div>
+        </section>
+
+        <section id="view-quota" class="view" data-view="quota" aria-labelledby="title-quota" hidden>
+          <header class="view-header">
+            <div>
+              <p class="eyebrow">Uso por provider</p>
+              <h1 id="title-quota">Quota</h1>
+            </div>
+            <p class="view-description">Consumo atual e janelas de reset das cotas disponíveis.</p>
+          </header>
+          <div class="panel" data-quota aria-live="polite">
+            <p class="empty-state">Carregando as quotas…</p>
           </div>
         </section>
       </main>
