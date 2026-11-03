@@ -75,10 +75,10 @@ function fixture(): Ctx {
   const insert = db.prepare("INSERT INTO events(id, ts, kind, plan, task, json) VALUES(?, ?, 'attempt', ?, ?, ?)");
   const ev = (id: string, ts: string, task: string, data: Record<string, unknown>) =>
     JSON.stringify({ v: 1, ts, source: "ginga", kind: "attempt", id, plan: "PLAN-0014", task, data });
-  insert.run("01JC00000000000000000000A1", "2026-10-05T10:00:00.000Z", "T400", ev("01JC00000000000000000000A1", "2026-10-05T10:00:00.000Z", "T400", { runtime: "opencode", passed: false, failure: "done_when", model: "m", tier: "medium", attempt_n: 1 }));
-  insert.run("01JC00000000000000000000A2", "2026-10-06T10:00:00.000Z", "T400", ev("01JC00000000000000000000A2", "2026-10-06T10:00:00.000Z", "T400", { runtime: "opencode", passed: true, model: "m", tier: "medium", attempt_n: 2 }));
-  insert.run("01JC00000000000000000000A3", "2026-10-12T10:00:00.000Z", "T400", ev("01JC00000000000000000000A3", "2026-10-12T10:00:00.000Z", "T400", { runtime: "opencode", passed: false, failure: "timeout", model: "m", tier: "medium", attempt_n: 3 }));
-  insert.run("01JC00000000000000000000A4", "2026-10-19T10:00:00.000Z", "T401", ev("01JC00000000000000000000A4", "2026-10-19T10:00:00.000Z", "T401", { runtime: "opencode", passed: false, failure: "done_when", model: "m", tier: "medium", attempt_n: 1 }));
+  insert.run("01JC00000000000000000000A1", "2026-10-05T10:00:00.000Z", "PLAN-0014", "T400", ev("01JC00000000000000000000A1", "2026-10-05T10:00:00.000Z", "T400", { runtime: "opencode", passed: false, failure: "done_when", model: "m", tier: "medium", attempt_n: 1 }));
+  insert.run("01JC00000000000000000000A2", "2026-10-06T10:00:00.000Z", "PLAN-0014", "T400", ev("01JC00000000000000000000A2", "2026-10-06T10:00:00.000Z", "T400", { runtime: "opencode", passed: true, model: "m", tier: "medium", attempt_n: 2 }));
+  insert.run("01JC00000000000000000000A3", "2026-10-12T10:00:00.000Z", "PLAN-0014", "T400", ev("01JC00000000000000000000A3", "2026-10-12T10:00:00.000Z", "T400", { runtime: "opencode", passed: false, failure: "timeout", model: "m", tier: "medium", attempt_n: 3 }));
+  insert.run("01JC00000000000000000000A4", "2026-10-19T10:00:00.000Z", "PLAN-0014", "T401", ev("01JC00000000000000000000A4", "2026-10-19T10:00:00.000Z", "T401", { runtime: "opencode", passed: false, failure: "done_when", model: "m", tier: "medium", attempt_n: 1 }));
   return { db, root };
 }
 
