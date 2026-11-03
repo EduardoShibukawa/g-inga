@@ -46,7 +46,7 @@ function kpi(html: string, name: string): string {
   expect(at).toBeGreaterThanOrEqual(0);
   const open = html.lastIndexOf("<", at);
   const close = html.indexOf("</", html.indexOf(">", at));
-  return html.slice(open, close);
+  return html.slice(open, close + 2);
 }
 
 describe("renderMetrics (PLAN-0014 TASK-05)", () => {
