@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { VerbArgs, VerbCtx } from "./registry";
-import { readOpencodeSessions, syncCost } from "../cost/opencode_db.ts";
+import { planTaskForDirectory, readOpencodeSessions, syncCost } from "../cost/opencode_db.ts";
 
 function defaultOpencodeDb(): string {
   return join(process.env.HOME ?? "", ".local", "share", "opencode", "opencode.db");
@@ -9,7 +9,7 @@ function defaultOpencodeDb(): string {
 export function costSync(ctx: VerbCtx, args: VerbArgs): unknown {
   const dbPath = args.db && args.db.trim() !== "" ? args.db : defaultOpencodeDb();
   const sessions = readOpencodeSessions(dbPath, { since: args.since });
-  return syncCost(ctx.db, sessions);
+  return syncCost(ctx.db, sessions, (directory) => planTaskForDirectory(ctx.root, directory));
 }
 
 export function costSummary(ctx: VerbCtx): unknown {

@@ -1,4 +1,6 @@
 import { Database } from "bun:sqlite";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { ulid } from "../events/emit.ts";
 
 export type OcSession = {
@@ -64,6 +66,38 @@ function isoCreated(timeCreated: number): string {
   return new Date(timeCreated).toISOString();
 }
 
+/** Extrai plan e task do diretório da sessão a partir do bundle root.
+ *  - componente do caminho com basename `^(.*)-plan-(\d{4})$` (ex.: `ginga-plan-0014`)
+ *    → número do PLAN, resolvido para o nome completo em `join(root, "plans")`
+ *    (diretório `PLAN-<NNNN>-*` com `PLAN.md`; fallback `PLAN-<NNNN>`);
+ *  - trecho `tasks/T(\d+)` no caminho → `task = "T<numero>"`;
+ *  - sem esses componentes → `{ plan: null, task: null }`.
+ */
+export function planTaskForDirectory(
+  root: string,
+  directory: string,
+): { plan: string | null; task: string | null } {
+  let plan: string | null = null;
+  for (const part of directory.split("/")) {
+    const m = part.match(/^(.*)-plan-(\d{4})$/);
+    if (!m) continue;
+    const planNum = m[2];
+    const plansDir = join(root, "plans");
+    const entries = existsSync(plansDir) ? readdirSync(plansDir, { withFileTypes: true }) : [];
+    const matching = entries.find(
+      (e) =>
+        e.isDirectory() &&
+        e.name.startsWith(`PLAN-${planNum}`) &&
+        existsSync(join(plansDir, e.name, "PLAN.md")),
+    );
+    plan = matching ? matching.name : `PLAN-${planNum}`;
+    break;
+  }
+  const taskMatch = directory.match(/(?:^|\/)tasks\/T(\d+)(?:\/|$)/);
+  const task = taskMatch ? `T${taskMatch[1]}` : null;
+  return { plan, task };
+}
+
 /** Lê sessões do opencode.db sem escrever no banco. */
 export function readOpencodeSessions(
   dbPath: string,
@@ -121,22 +155,33 @@ function existingCostSessionIds(db: Database): Set<string> {
   return ids;
 }
 
-/** Importa cada sessão como um evento cost idempotente por session_id. */
-export function syncCost(db: Database, sessions: OcSession[]): { emitted: number } {
+/** Importa cada sessão como um evento cost idempotente por session_id.
+ *  O evento sai com `ts = session.created` (time_created da sessão no opencode.db,
+ *  não a hora do sync). Se `resolve` for passado, grava as colunas plan/task e os
+ *  campos plan/task do envelope a partir do diretório da sessão.
+ */
+export function syncCost(
+  db: Database,
+  sessions: OcSession[],
+  resolve?: (directory: string) => { plan: string | null; task: string | null },
+): { emitted: number } {
   const seen = existingCostSessionIds(db);
   const insert = db.prepare(
-    "INSERT INTO events(id, ts, kind, plan, task, json) VALUES(?, ?, 'cost', NULL, NULL, ?)",
+    "INSERT INTO events(id, ts, kind, plan, task, json) VALUES(?, ?, 'cost', ?, ?, ?)",
   );
   let emitted = 0;
   for (const session of sessions) {
     if (seen.has(session.id)) continue;
     const provider = session.model.includes("/") ? session.model.slice(0, session.model.indexOf("/")) : session.model;
+    const { plan, task } = resolve ? resolve(session.directory) : { plan: null, task: null };
     const event = {
       v: 1,
-      ts: new Date().toISOString(),
+      ts: session.created,
       source: "ginga",
       kind: "cost",
       id: ulid(),
+      plan,
+      task,
       data: {
         runtime: "opencode",
         scope: "call",
@@ -149,7 +194,7 @@ export function syncCost(db: Database, sessions: OcSession[]): { emitted: number
         session_id: session.id,
       },
     };
-    insert.run(event.id, event.ts, JSON.stringify(event));
+    insert.run(event.id, event.ts, plan, task, JSON.stringify(event));
     seen.add(session.id);
     emitted += 1;
   }
