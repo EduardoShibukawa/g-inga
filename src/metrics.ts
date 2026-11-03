@@ -1,5 +1,13 @@
 import type { Database } from "bun:sqlite";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { repeatedErrors } from "./metrics_repeat";
+
+export type CostByMetrics = {
+  spec: Record<string, number>;
+  plan: Record<string, number>;
+  task: Record<string, number>;
+};
 
 export type Metrics = {
   ftpr: Record<string, number>;
@@ -8,6 +16,9 @@ export type Metrics = {
   escalations: number;
   spent_usd: number;
   repeated_errors: number;
+  executions: number;
+  failure_rate: number;
+  cost_by: CostByMetrics;
 };
 
 type EventRow = {
@@ -23,6 +34,53 @@ type Attempt = { data: Record<string, unknown> };
 type TaskState = { attempts: Attempt[] };
 type Ratio = { total: number; firstPasses: number };
 type CostTotal = { present: boolean; amount: number };
+
+function frontmatterValue(raw: string, field: string): string | undefined {
+  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!match) return undefined;
+  const line = new RegExp(`^${field}:[ \\t]*(.*)$`, "m").exec(match[1] ?? "");
+  if (!line) return undefined;
+  const value = (line[1] ?? "").trim().replace(/^["'](.*)["']$/, "$1");
+  return value === "" ? undefined : value;
+}
+
+/** Relaciona cada PLAN do bundle ao SPEC declarado no seu frontmatter. */
+function planSpecs(root: string | undefined): Map<string, string> {
+  const result = new Map<string, string>();
+  if (!root) return result;
+
+  const plansDir = join(root, "plans");
+  if (!existsSync(plansDir)) return result;
+  let entries: string[];
+  try {
+    entries = readdirSync(plansDir);
+  } catch {
+    return result;
+  }
+
+  for (const entry of entries.sort()) {
+    if (!entry.startsWith("PLAN-")) continue;
+    const file = join(plansDir, entry, "PLAN.md");
+    if (!existsSync(file)) continue;
+
+    let raw: string;
+    try {
+      raw = readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    const spec = frontmatterValue(raw, "spec");
+    if (!spec) continue;
+    const id = frontmatterValue(raw, "id") ?? /^PLAN-\d+/.exec(entry)?.[0] ?? entry;
+    result.set(id, spec);
+    result.set(entry, spec);
+  }
+  return result;
+}
+
+function addCost(costs: Record<string, number>, key: string, amount: number): void {
+  costs[key] = (costs[key] ?? 0) + amount;
+}
 
 const TIER_RANK: Record<string, number> = {
   free: 0,
@@ -96,6 +154,9 @@ export function computeMetrics(
       escalations: 0,
       spent_usd: 0,
       repeated_errors: 0,
+      executions: 0,
+      failure_rate: 0,
+      cost_by: { spec: {}, plan: {}, task: {} },
     };
   }
 
@@ -120,6 +181,10 @@ export function computeMetrics(
   const verified = new Set<string>();
   const failures = new Map<string, number>();
   const costs = new Map<string, CostTotal>();
+  const costBy: CostByMetrics = { spec: {}, plan: {}, task: {} };
+  const specByPlan = planSpecs(options.root);
+  let executions = 0;
+  let failedExecutions = 0;
   let spentUsd = 0;
 
   for (const row of rows) {
@@ -127,8 +192,12 @@ export function computeMetrics(
     const key = taskKey(event.plan, event.task);
 
     if (row.kind === "attempt") {
+      executions += 1;
       const failure = nonEmptyString(event.data.failure);
-      if (failure) failures.set(failure, (failures.get(failure) ?? 0) + 1);
+      if (failure) {
+        failedExecutions += 1;
+        failures.set(failure, (failures.get(failure) ?? 0) + 1);
+      }
       if (!key) continue;
       const state = tasks.get(key) ?? { attempts: [] };
       state.attempts.push({ data: event.data });
@@ -146,7 +215,15 @@ export function computeMetrics(
 
     if (row.kind === "cost") {
       const amount = finiteNumber(event.data.amount_usd);
-      if (amount !== undefined) spentUsd += amount;
+      if (amount !== undefined) {
+        spentUsd += amount;
+        if (event.plan) {
+          addCost(costBy.plan, event.plan, amount);
+          const spec = specByPlan.get(event.plan);
+          if (spec) addCost(costBy.spec, spec, amount);
+          if (event.task) addCost(costBy.task, `${event.plan}/${event.task}`, amount);
+        }
+      }
       if (!key) continue;
       const cost = costs.get(key) ?? { present: false, amount: 0 };
       cost.present = true;
@@ -224,5 +301,8 @@ export function computeMetrics(
     escalations,
     spent_usd: spentUsd,
     repeated_errors,
+    executions,
+    failure_rate: executions === 0 ? 0 : failedExecutions / executions,
+    cost_by: costBy,
   };
 }
