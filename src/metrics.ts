@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { repeatedErrors } from "./metrics_repeat";
 
 export type Metrics = {
   ftpr: Record<string, number>;
@@ -6,6 +7,7 @@ export type Metrics = {
   failures_by_reason: Record<string, number>;
   escalations: number;
   spent_usd: number;
+  repeated_errors: number;
 };
 
 type EventRow = {
@@ -79,7 +81,10 @@ function ratioValue(ratio: Ratio | undefined): number {
 }
 
 /** Calcula métricas de execução a partir dos eventos persistidos no state.db. */
-export function computeMetrics(db: Database, options: { since?: string } = {}): Metrics {
+export function computeMetrics(
+  db: Database,
+  options: { since?: string; root?: string } = {},
+): Metrics {
   const hasEvents = db
     .query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'events'")
     .get() !== null;
@@ -90,6 +95,7 @@ export function computeMetrics(db: Database, options: { since?: string } = {}): 
       failures_by_reason: {},
       escalations: 0,
       spent_usd: 0,
+      repeated_errors: 0,
     };
   }
 
@@ -203,11 +209,20 @@ export function computeMetrics(db: Database, options: { since?: string } = {}): 
     }
   }
 
+  const root = options.root?.trim();
+  const repeated_errors = root
+    ? repeatedErrors(db, root, since ? { since } : {}).reduce(
+        (total, metric) => total + metric.repeated,
+        0,
+      )
+    : 0;
+
   return {
     ftpr,
     cost_per_verified_task_usd: verified.size === 0 ? 0 : verifiedCost / verified.size,
     failures_by_reason: Object.fromEntries(failures),
     escalations,
     spent_usd: spentUsd,
+    repeated_errors,
   };
 }
