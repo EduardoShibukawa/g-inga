@@ -35,7 +35,9 @@ const quotas: Quota[] = [
 function numbers(fragment: string): string[] {
   const values: string[] = [];
   for (const match of fragment.matchAll(/>([^<>]*\d[^<>]*)</g)) {
-    values.push(...(match[1]?.match(/-?\d+(?:\.\d+)?%?/g) ?? []));
+    for (const token of match[1]?.match(/-?\d+(?:\.\d+)?%?/g) ?? []) {
+      values.push(String(Number(token.replace("%", ""))));
+    }
   }
   return values;
 }
