@@ -33,84 +33,191 @@ export function fetchQuota(fetcher = globalThis.fetch) {
   return postVerb(QUOTA_PATH, fetcher);
 }
 
-function element(tag, className, text) {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
+function escapeHtml(value) {
+  const text = value === null || value === undefined ? "" : String(value);
+  const entities = {
+    "&": "&" + "amp;",
+    "<": "&" + "lt;",
+    ">": "&" + "gt;",
+    '"': "&" + "quot;",
+    "'": "&" + "#39;",
+  };
+  return text.replace(/[&<>"']/g, (char) => entities[char]);
 }
 
-function metricLabel(name) {
-  return {
-    executions: "Execuções",
-    failure_rate: "Taxa de falha",
-    ftpr: "FTPR",
-    spent_usd: "Custo pago",
-    cost_per_verified_task_usd: "Custo por TASK ok",
-    escalations: "Escaladas",
-    repeated_errors: "Erros repetidos",
-  }[name] ?? name;
+function finite(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-/** Monta um resumo DOM das métricas e das regras do vigia. */
+function percent(value) {
+  return `${(finite(value) * 100).toFixed(1).replace(/\.0$/, "")}%`;
+}
+
+function usd(value) {
+  return `US$ ${finite(value).toFixed(2)}`;
+}
+
+function kpi(name, label, value, note) {
+  return `<article class="metrics-kpi">
+  <span class="metrics-kpi-label">${escapeHtml(label)}</span>
+  <strong class="metrics-kpi-value" data-kpi="${escapeHtml(name)}">${escapeHtml(value)}</strong>
+  <span class="metrics-kpi-note">${escapeHtml(note)}</span>
+</article>`;
+}
+
+function valueRows(values, empty = "—") {
+  const entries = Object.entries(values ?? {}).sort(([left], [right]) => left.localeCompare(right));
+  if (entries.length === 0) return `<tr><td>${escapeHtml(empty)}</td><td>0</td></tr>`;
+  return entries
+    .map(([name, value]) => `<tr><th scope="row">${escapeHtml(name)}</th><td>${escapeHtml(String(value))}</td></tr>`)
+    .join("\n");
+}
+
+function failureChart(failures) {
+  const entries = Object.entries(failures ?? {}).sort(([left], [right]) => left.localeCompare(right));
+  const max = Math.max(1, ...entries.map(([, count]) => finite(count)));
+  const bars = entries
+    .map(([reason, count], index) => {
+      const y = 24 + index * 28;
+      const width = Math.max(1, (finite(count) / max) * 160);
+      return `<g class="metrics-bar">
+    <text x="0" y="${y}">${escapeHtml(reason)}</text>
+    <rect x="150" y="${y - 12}" width="${width}" height="16"></rect>
+    <text x="320" y="${y}">${escapeHtml(String(finite(count)))}</text>
+  </g>`;
+    })
+    .join("\n");
+  const tableRows = entries.length === 0
+    ? `<tr><td>—</td><td>0</td></tr>`
+    : entries.map(([reason, count]) => `<tr><th scope="row">${escapeHtml(reason)}</th><td>${escapeHtml(String(finite(count)))}</td></tr>`).join("\n");
+
+  return `<figure class="metrics-chart" data-chart="failures">
+  <svg viewBox="0 0 360 220" role="img" aria-labelledby="metrics-failures-title">
+    <title id="metrics-failures-title">Falhas por motivo</title>
+    ${bars}
+  </svg>
+  <table>
+    <caption>Falhas por motivo</caption>
+    <thead><tr><th scope="col">Motivo</th><th scope="col">Falhas</th></tr></thead>
+    <tbody>${tableRows}</tbody>
+  </table>
+</figure>`;
+}
+
+function costByTable(label, values) {
+  return `<section class="metrics-cost" data-cost-by="${escapeHtml(label.toLowerCase())}">
+  <h3>Custo por ${escapeHtml(label)}</h3>
+  <table>
+    <thead><tr><th scope="col">${escapeHtml(label)}</th><th scope="col">Custo</th></tr></thead>
+    <tbody>${valueRows(values)}</tbody>
+  </table>
+</section>`;
+}
+
+function vigiaTable(rules) {
+  const list = Array.isArray(rules) ? rules : [];
+  const body = list.length === 0
+    ? `<tr><td>—</td><td>0</td><td>0</td><td>—</td><td>US$ 0.00</td></tr>`
+    : list.map((rule) => `<tr data-rule="${escapeHtml(rule?.rule_id)}">
+      <th scope="row">${escapeHtml(rule?.rule_id)}</th>
+      <td>${escapeHtml(String(finite(rule?.count)))}</td>
+      <td>${escapeHtml(String(finite(rule?.open)))}</td>
+      <td>${rule?.mttr_min === null || rule?.mttr_min === undefined ? "—" : escapeHtml(`${rule.mttr_min} min`)}</td>
+      <td>${escapeHtml(usd(rule?.cost_usd))}</td>
+    </tr>`).join("\n");
+
+  return `<section class="metrics-vigia" data-vigia>
+  <h3>Vigia por regra</h3>
+  <table>
+    <thead><tr><th scope="col">Regra</th><th scope="col">Contagem</th><th scope="col">Abertos</th><th scope="col">MTTR</th><th scope="col">Custo</th></tr></thead>
+    <tbody>${body}</tbody>
+  </table>
+</section>`;
+}
+
+/** HTML puro da tela de Métricas da UI web. */
+export function renderMetricsHtml(metrics) {
+  const payload = metrics ?? {};
+  const ftpr = payload.ftpr ?? {};
+  const failures = payload.failures_by_reason ?? {};
+  const costBy = payload.cost_by ?? { spec: {}, plan: {}, task: {} };
+  const kpis = [
+    kpi("executions", "Execuções", String(finite(payload.executions)), "tentativas no período"),
+    kpi("failure-rate", "Taxa de falha", percent(payload.failure_rate), "quota e infra incluídas"),
+    kpi("ftpr", "FTPR", percent(ftpr.all), "passou na primeira tentativa"),
+    kpi("spent-usd", "Custo pago", usd(payload.spent_usd), "custo medido"),
+    kpi("cost-per-verified-task-usd", "Custo por TASK ok", usd(payload.cost_per_verified_task_usd), "por TASK verificada"),
+    kpi("escalations", "Escaladas", String(finite(payload.escalations)), "mudanças de tier"),
+    kpi("repeated-errors", "Erros repetidos", String(finite(payload.repeated_errors)), "depois de learning/lesson"),
+  ].join("\n");
+  const ftprRows = Object.entries(ftpr).length === 0
+    ? `<tr><td>—</td><td>—</td></tr>`
+    : Object.entries(ftpr).sort(([left], [right]) => left.localeCompare(right)).map(([scope, value]) => `<tr><th scope="row">${escapeHtml(scope)}</th><td>${escapeHtml(percent(value))}</td></tr>`).join("\n");
+
+  return `<section class="roda-metrics" data-metrics aria-labelledby="metrics-title">
+  <header class="metrics-header"><h1 id="metrics-title">Métricas</h1></header>
+  <section class="metrics-kpis" aria-label="KPIs">${kpis}</section>
+  <section class="metrics-breakdown">
+    <h2>Falhas por motivo</h2>
+    ${failureChart(failures)}
+  </section>
+  <section class="metrics-ftpr">
+    <h2>FTPR por modelo e tier</h2>
+    <table>
+      <thead><tr><th scope="col">Escopo</th><th scope="col">FTPR</th></tr></thead>
+      <tbody>${ftprRows}</tbody>
+    </table>
+  </section>
+  <div class="metrics-costs">
+    ${costByTable("SPEC", costBy.spec ?? {})}
+    ${costByTable("PLAN", costBy.plan ?? {})}
+    ${costByTable("TASK", costBy.task ?? {})}
+  </div>
+  ${vigiaTable(payload.alert_metrics)}
+</section>`;
+}
+
+function quotaUsage(quota) {
+  if (quota?.used_pct === null || quota?.used_pct === undefined) {
+    return quota?.source === "manual" ? "manual" : "—";
+  }
+  return `${finite(quota.used_pct)}%`;
+}
+
+/** HTML puro da tela de Quota da UI web. */
+export function renderQuotaHtml(quotas) {
+  const list = Array.isArray(quotas) ? quotas : [];
+  const body = list.length === 0
+    ? `<tr><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>`
+    : list.map((quota) => `<tr data-provider="${escapeHtml(quota?.provider)}">
+      <th scope="row">${escapeHtml(quota?.provider)}</th>
+      <td>${escapeHtml(quota?.window)}</td>
+      <td>${escapeHtml(quotaUsage(quota))}</td>
+      <td>${escapeHtml(quota?.resets_at ?? "—")}</td>
+      <td>${escapeHtml(quota?.source ?? "—")}</td>
+    </tr>`).join("\n");
+
+  return `<section class="roda-quota" data-quota aria-labelledby="quota-title">
+  <header class="quota-header"><h1 id="quota-title">Quota</h1></header>
+  <table>
+    <thead><tr><th scope="col">Provider</th><th scope="col">Janela</th><th scope="col">Uso</th><th scope="col">Reseta</th><th scope="col">Fonte</th></tr></thead>
+    <tbody>${body}</tbody>
+  </table>
+</section>`;
+}
+
+/** Monta o dashboard de métricas no host. */
 export function mountMetrics(host, payload) {
-  if (!host?.replaceChildren) return host;
-  const root = element("section", "roda-metrics");
-  root.setAttribute("data-metrics", "");
-  root.append(element("h1", "", "Métricas"));
-
-  const kpis = element("div", "metrics-kpis");
-  const ftpr = payload?.ftpr?.all;
-  const values = [
-    ["executions", payload?.executions ?? 0],
-    ["failure_rate", payload?.failure_rate ?? 0],
-    ["ftpr", ftpr ?? 0],
-    ["spent_usd", payload?.spent_usd ?? 0],
-    ["cost_per_verified_task_usd", payload?.cost_per_verified_task_usd ?? 0],
-    ["escalations", payload?.escalations ?? 0],
-    ["repeated_errors", payload?.repeated_errors ?? 0],
-  ];
-  for (const [name, value] of values) {
-    const card = element("article", "metrics-kpi");
-    card.setAttribute("data-kpi", name.replaceAll("_", "-"));
-    card.append(element("span", "metrics-kpi-label", metricLabel(name)), element("strong", "metrics-kpi-value", String(value)));
-    kpis.append(card);
-  }
-  root.append(kpis);
-
-  const rules = element("table", "metrics-vigia");
-  rules.setAttribute("data-vigia", "");
-  for (const rule of payload?.alert_metrics ?? []) {
-    const row = document.createElement("tr");
-    row.setAttribute("data-rule", String(rule?.rule_id ?? ""));
-    for (const value of [rule?.rule_id, rule?.count, rule?.open, rule?.mttr_min ?? "—", rule?.cost_usd ?? 0]) {
-      row.append(element("td", "", String(value ?? "—")));
-    }
-    rules.append(row);
-  }
-  root.append(rules);
-  host.replaceChildren(root);
-  return root;
+  if (!host || typeof host !== "object" || !("innerHTML" in host)) return host;
+  host.innerHTML = renderMetricsHtml(payload);
+  return typeof host.querySelector === "function" ? host.querySelector("[data-metrics]") ?? host : host;
 }
 
-/** Monta a tabela DOM de quota por provider. */
+/** Monta a tabela de quota por provider no host. */
 export function mountQuota(host, quotas) {
-  if (!host?.replaceChildren) return host;
-  const root = element("section", "roda-quota");
-  root.setAttribute("data-quota", "");
-  root.append(element("h1", "", "Quota"));
-  const table = element("table", "");
-  for (const quota of Array.isArray(quotas) ? quotas : []) {
-    const row = document.createElement("tr");
-    row.setAttribute("data-provider", String(quota?.provider ?? ""));
-    for (const value of [quota?.provider, quota?.window, quota?.used_pct ?? "manual", quota?.resets_at ?? "—", quota?.source]) {
-      row.append(element("td", "", String(value ?? "—")));
-    }
-    table.append(row);
-  }
-  root.append(table);
-  host.replaceChildren(root);
-  return root;
+  if (!host || typeof host !== "object" || !("innerHTML" in host)) return host;
+  host.innerHTML = renderQuotaHtml(quotas);
+  return typeof host.querySelector === "function" ? host.querySelector("[data-quota]") ?? host : host;
 }
 
 /** Carrega e monta as duas telas quando os hosts existem. */
