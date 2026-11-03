@@ -19,6 +19,18 @@ export type Quota = {
   source: QuotaSource;
 };
 
+/** Indica se nenhuma quota automática está esgotada. */
+export function quotaCapOk(quotas: Quota[]): boolean {
+  return !quotas.some(
+    (quota) =>
+      (quota.source === "codex-rollout" ||
+        quota.source === "claude-statusline" ||
+        quota.source === "opencode-db") &&
+      quota.used_pct !== null &&
+      quota.used_pct >= 100,
+  );
+}
+
 const ZEN_MONTHLY_BUDGET_USD = 10;
 
 function manualQuota(provider: string): Quota {
