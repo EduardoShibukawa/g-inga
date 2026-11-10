@@ -4,6 +4,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { HOOKS_TOML, hooksDrift, type HooksDrift } from "./hooks/index.ts";
 import { binary } from "./workspace.ts";
+import { DEFAULT_COMMANDS } from "./tick.ts";
+import { DEFAULT_LEDGER } from "./verbs/ledger.ts";
 
 type DoctorRecord = {
   harness: string;
@@ -131,6 +133,53 @@ function versionProbe(spec: { bin: string; required: boolean }, compat: Record<s
       : mk("degraded", "fail", cmd, exit, stdout, `${spec.bin} ${payload.version} fora da faixa ${range} (opcional)`);
   }
   return mk("ok", "pass", cmd, exit, stdout, `${spec.bin} ${payload.version} na faixa ${range}`);
+}
+
+/**
+ * T920: confere os `[commands]` do condutor (padrões + project.toml do cwd).
+ * Binário ausente do PATH é aviso — unverified/blocked, sem mexer no exit.
+ */
+function commandsRecord(cwd: string): DoctorRecord {
+  const started = Date.now();
+  const commands: Record<string, string> = { ...DEFAULT_COMMANDS, ledger: DEFAULT_LEDGER };
+  delete commands.dispatch; // mesmo comando de `run`
+  let raw = "";
+  try {
+    raw = readFileSync(join(cwd, ".ginga", "project.toml"), "utf8");
+  } catch {
+    // sem project.toml: valem os padrões
+  }
+  let section = "";
+  for (const line of raw.split("\n")) {
+    const head = line.match(/^\s*\[([^\]]+)\]\s*$/);
+    if (head) {
+      section = head[1]!.trim();
+      continue;
+    }
+    const kv = section === "commands" ? line.match(/^\s*([A-Za-z0-9_-]+)\s*=\s*"(.*)"\s*$/) : null;
+    if (kv && kv[1]! in commands) commands[kv[1]!] = kv[2]!;
+  }
+  const missing = new Map<string, string[]>();
+  for (const [key, command] of Object.entries(commands)) {
+    const bin = command.trim().split(/\s+/)[0] ?? "";
+    if (bin === "" || bin === "builtin" || bin === "none") continue;
+    const found = bin.includes("/") ? existsSync(bin) : Bun.which(bin) !== null;
+    if (!found) missing.set(bin, [...(missing.get(bin) ?? []), key]);
+  }
+  const ok = missing.size === 0;
+  return {
+    harness: "ginga",
+    check: "commands",
+    status: ok ? "ok" : "unverified",
+    law2: ok ? "pass" : "blocked",
+    cmd: null,
+    exit: null,
+    stdout_sha256: null,
+    duration_ms: Date.now() - started,
+    detail: ok
+      ? "binários dos [commands] no PATH"
+      : `fora do PATH: ${[...missing].map(([bin, keys]) => `${bin} (${keys.join(", ")})`).join("; ")}`,
+  };
 }
 
 export function doctorCmd(args: string[]): number {
@@ -332,6 +381,9 @@ export function doctorCmd(args: string[]): number {
       records.push(rec);
     }
   }
+
+  // commands (T920): os binários que o condutor chama por `[commands]`.
+  if (only === undefined) records.push(commandsRecord(cwd));
 
   // hooks_drift (ginga): acusa drift dos hooks instalados pelo `ginga hooks install`
   // na raiz do cwd (com hooks.toml). Sem hooks.toml: unverified/blocked, sem
