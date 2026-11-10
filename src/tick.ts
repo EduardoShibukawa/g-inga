@@ -1,6 +1,6 @@
 // `ginga tick` (PLAN-0010 TASK-02): varre a fila (`[commands].queue`) e
 // despacha cada TASK `open` sem `blocked_by` por `[commands].dispatch`
-// (padrão `manda run {plan} --task {task}`). O claim é atômico entre processos:
+// (padrão `manda run {plan} --task {task} --root {root}`). O claim é atômico entre processos:
 // BEGIN IMMEDIATE + busy_timeout em task_exec marca `running` com lease
 // (`lease_owner`, `lease_until` em epoch ms, renovado enquanto o despacho
 // roda); no fim o lease é liberado e o status vira `dispatched` (exit 0,
@@ -31,13 +31,18 @@ type QueueEntry = { ref: string; plan: string; task: string; state: string; bloc
 type Exec = { plan: string; task: string };
 type Commands = { queue: string; dispatch: string; red?: string; run?: string; judge?: string; merge?: string; replan?: string; notify?: string };
 
-const DEFAULT_COMMANDS: Commands = {
+/**
+ * Padrões de `[commands]` (T907): cada fase é um verbo do manda com `--root`.
+ * `manda red|judge|merge {plan}` cobrem todos os repos do PLAN; nenhum padrão
+ * aponta para script fora dos repos.
+ */
+export const DEFAULT_COMMANDS: Commands = {
   queue: "pinga queue --json --root {root}",
-  dispatch: "manda run {plan} --task {task}",
-  red: "manda red {plan}",
-  run: "manda run {plan} {task}",
-  judge: "manda judge {plan}",
-  merge: "bin/merge-gate.sh {plan}",
+  dispatch: "manda run {plan} --task {task} --root {root}",
+  red: "manda red {plan} --root {root}",
+  run: "manda run {plan} --task {task} --root {root}",
+  judge: "manda judge {plan} --root {root}",
+  merge: "manda merge {plan} --root {root}",
   replan: "manda replan {plan} {task}",
 };
 
