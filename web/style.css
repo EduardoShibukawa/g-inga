@@ -559,15 +559,19 @@ code,
   }
 
   .primary-nav {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    display: flex;
     gap: 4px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
   }
 
   .primary-nav a {
+    flex: 0 0 auto;
+    min-width: 84px;
     min-height: 48px;
     justify-content: center;
-    padding: 8px;
+    padding: 8px 12px;
     text-align: center;
   }
 
