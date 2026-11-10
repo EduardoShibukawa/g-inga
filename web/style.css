@@ -1290,3 +1290,121 @@ code,
   text-align: right;
   font-weight: 600;
 }
+
+/* Onboarding — T917 */
+.roda-onboarding {
+  display: grid;
+  gap: 20px;
+  max-width: 760px;
+}
+
+.onboarding-step {
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.onboarding-step h2,
+.onboarding-done h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 4px;
+  font-size: 17px;
+}
+
+.onboarding-n {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.onboarding-hint {
+  margin: 0 0 12px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.onboarding-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 16px;
+  margin: 0;
+}
+
+.onboarding-facts dt {
+  color: var(--text-muted);
+}
+
+.onboarding-facts dd {
+  margin: 0;
+}
+
+.onboarding-missing {
+  margin: 0;
+  color: var(--warning);
+}
+
+.onboarding-runtimes,
+.onboarding-created {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.onboarding-runtimes code {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.onboarding-toml {
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  overflow-x: auto;
+}
+
+.onboarding-create {
+  min-height: 44px;
+  padding: 0 20px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--surface);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.onboarding-create:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.onboarding-create:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.onboarding-done {
+  padding: 16px 18px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+}
+
+.onboarding-error {
+  margin: 0;
+  color: var(--danger);
+}

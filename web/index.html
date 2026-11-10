@@ -16,6 +16,7 @@
   <script type="module" src="/models.js"></script>
   <script type="module" src="/ledger.js"></script>
   <script type="module" src="/spec.js"></script>
+  <script type="module" src="/onboarding.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Pular para o conteúdo</a>
@@ -55,6 +56,9 @@
         </a>
         <a href="#ledger" data-view="ledger" aria-controls="view-ledger">
           <span>Ledger</span>
+        </a>
+        <a href="#onboarding" data-view="onboarding" aria-controls="view-onboarding">
+          <span>Onboarding</span>
         </a>
       </nav>
 
@@ -212,6 +216,19 @@
           </header>
           <div class="panel" data-spec aria-live="polite">
             <p class="empty-state">Carregando as SPECs…</p>
+          </div>
+        </section>
+
+        <section id="view-onboarding" class="view" data-view="onboarding" aria-labelledby="title-onboarding" hidden>
+          <header class="view-header">
+            <div>
+              <p class="eyebrow">ginga init</p>
+              <h1 id="title-onboarding">Onboarding</h1>
+            </div>
+            <p class="view-description">O que o ginga leu deste projeto e o contrato que ele propõe.</p>
+          </header>
+          <div class="panel" data-onboarding aria-live="polite">
+            <p class="empty-state">Lendo o projeto…</p>
           </div>
         </section>
       </main>
