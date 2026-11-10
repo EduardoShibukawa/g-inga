@@ -29,7 +29,7 @@ const BUSY_TIMEOUT_MS = 10_000;
 
 type QueueEntry = { ref: string; plan: string; task: string; state: string; blocked_by: string[] };
 type Exec = { plan: string; task: string };
-type Commands = { queue: string; dispatch: string; red?: string; run?: string; judge?: string; merge?: string; replan?: string; notify?: string };
+type Commands = { queue: string; dispatch: string; red?: string; run?: string; judge?: string; merge?: string; replan?: string; notify?: string; next?: string };
 
 /**
  * Padrões de `[commands]` (T907): cada fase é um verbo do manda com `--root`.
@@ -44,6 +44,8 @@ export const DEFAULT_COMMANDS: Commands = {
   judge: "manda judge {plan} --root {root}",
   merge: "manda merge {plan} --root {root}",
   replan: "manda replan {plan} {task}",
+  // T910: quem decide o próximo passo do PLAN é o orquestrador
+  next: "manda next",
 };
 
 /** `queue = "…"`/`dispatch = "…"` da seção [commands] do project.toml. */
@@ -59,7 +61,7 @@ export function parseCommands(raw: string): Partial<Commands> {
     const kv = line.match(/^\s*([A-Za-z0-9_-]+)\s*=\s*"(.*)"\s*$/);
     if (kv && section === "commands") {
       const key = kv[1]! as keyof Commands;
-      if (key === "queue" || key === "dispatch" || key === "red" || key === "run" || key === "judge" || key === "merge" || key === "replan" || key === "notify") {
+      if (key === "queue" || key === "dispatch" || key === "red" || key === "run" || key === "judge" || key === "merge" || key === "replan" || key === "notify" || key === "next") {
         cmds[key] = kv[2]!;
       }
     }
@@ -80,6 +82,40 @@ function readCommands(root: string): Commands {
 /** Substitui {plan}, {task} e {root} no comando configurado. */
 function fill(command: string, vars: Record<string, string>): string {
   return command.replace(/\{(\w+)\}/g, (m, key: string) => (key in vars ? vars[key]! : m));
+}
+
+const ACTION_CMDS = new Set(["red", "run", "judge", "merge", "replan", "notify", "none"]);
+
+/**
+ * Próxima ação do PLAN (T910): o estado vai por stdin para `[commands].next`
+ * (padrão `manda next`) e a ação volta em JSON. `"builtin"`, comando que não
+ * responde ou resposta inválida usam a regra embutida de `tick_plan.ts`.
+ */
+function askNext(command: string | undefined, state: Parameters<typeof nextAction>[0] & { plan: string }, root: string) {
+  if (command && command !== "builtin") {
+    try {
+      const r = Bun.spawnSync(["/bin/sh", "-c", fill(command, { root, plan: state.plan })], {
+        stdin: Buffer.from(JSON.stringify(state)),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      if (r.exitCode === 0) {
+        const line = r.stdout.toString("utf8").trim().split("\n").pop() ?? "";
+        const a = JSON.parse(line) as { cmd?: unknown; plan?: unknown; task?: unknown; reason?: unknown };
+        if (typeof a.cmd === "string" && ACTION_CMDS.has(a.cmd)) {
+          return {
+            cmd: a.cmd as ReturnType<typeof nextAction>["cmd"],
+            plan: typeof a.plan === "string" && a.plan !== "" ? a.plan : state.plan,
+            ...(typeof a.task === "string" && a.task !== "" ? { task: a.task } : {}),
+            reason: typeof a.reason === "string" ? a.reason : "",
+          };
+        }
+      }
+    } catch {
+      // cai na regra embutida
+    }
+  }
+  return nextAction(state);
 }
 
 /** Lê o JSON da fila vindo do comando de queue configurado. */
@@ -619,12 +655,13 @@ async function runTickPass(
             deps_done: (e.blocked_by?.length ?? 0) === 0,
           };
         });
-        const action = nextAction({
+        const action = askNext(commands.next, {
+          plan,
           phase: planPhase.phase,
           tasks: tasksState,
           cap_ok: quotaCapOk(readQuotas({ home: process.env.HOME ?? homedir(), db })),
           judge: readJudgeVerdict(base, plan),
-        });
+        }, base);
         if (action.cmd === "none" || action.cmd === "notify") continue;
         // Execute action
         const cmdTemplate = (commands as any)[action.cmd];
