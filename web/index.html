@@ -13,6 +13,7 @@
   <script type="module" src="/plan.js"></script>
   <script type="module" src="/alerts.js"></script>
   <script type="module" src="/metrics.js"></script>
+  <script type="module" src="/ledger.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Pular para o conteúdo</a>
@@ -46,6 +47,9 @@
         </a>
         <a href="#quota" data-view="quota" aria-controls="view-quota">
           <span>Quota</span>
+        </a>
+        <a href="#ledger" data-view="ledger" aria-controls="view-ledger">
+          <span>Ledger</span>
         </a>
       </nav>
 
@@ -174,6 +178,19 @@
           </header>
           <div class="panel" data-quota aria-live="polite">
             <p class="empty-state">Carregando as quotas…</p>
+          </div>
+        </section>
+
+        <section id="view-ledger" class="view" data-view="ledger" aria-labelledby="title-ledger" hidden>
+          <header class="view-header">
+            <div>
+              <p class="eyebrow">Prova do gate</p>
+              <h1 id="title-ledger">Ledger e Bench</h1>
+            </div>
+            <p class="view-description">Receipts do pinga, o estado da cadeia e o bench das SPECs.</p>
+          </header>
+          <div class="panel" data-ledger aria-live="polite">
+            <p class="empty-state">Carregando o ledger…</p>
           </div>
         </section>
       </main>

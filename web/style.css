@@ -856,3 +856,142 @@ code,
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* Tabelas e KPIs das telas de dados (Métricas, Quota, Ledger) — T914 */
+.panel table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.panel th,
+.panel td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.panel thead th {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.panel tbody th {
+  font-weight: 600;
+}
+
+.metrics-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.metrics-kpi {
+  display: grid;
+  gap: 2px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.metrics-kpi-label,
+.metrics-kpi-note {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.metrics-kpi-value {
+  font-size: 24px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.metrics-kpi[data-tone="ok"] .metrics-kpi-value {
+  color: var(--accent);
+}
+
+.metrics-kpi[data-tone="danger"] .metrics-kpi-value {
+  color: var(--danger);
+}
+
+.ledger-tabs,
+.ledger-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.ledger-tab,
+.ledger-filter {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ledger-tab[aria-selected="true"],
+.ledger-filter[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.ledger-tab:focus-visible,
+.ledger-filter:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ledger-scroll {
+  overflow-x: auto;
+}
+
+.ledger-table {
+  min-width: 720px;
+}
+
+.ledger-num {
+  color: var(--text-muted);
+}
+
+.ledger-status {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ledger-status[data-status="pass"] {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.ledger-status[data-status="fail"],
+.ledger-status[data-status="blocked"] {
+  color: var(--danger);
+}
+
+.ledger-note {
+  max-width: 70ch;
+  color: var(--text-muted);
+}
+
+.ledger-error {
+  color: var(--danger);
+}
