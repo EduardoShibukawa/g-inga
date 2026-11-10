@@ -560,6 +560,7 @@ code,
 
   .primary-nav {
     display: flex;
+    flex-direction: row;
     gap: 4px;
     overflow-x: auto;
     overscroll-behavior-x: contain;
