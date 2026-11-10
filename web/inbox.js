@@ -190,6 +190,40 @@ function announce(root, message, failed = false) {
   output.dataset.failed = String(failed);
 }
 
+/** A linha de status dentro do painel montado (DOM real ou nó de teste). */
+function statusLine(root) {
+  return (
+    root?.children?.find?.((n) => n?.dataset && "inboxStatus" in n.dataset) ??
+    root?.querySelector?.("[data-inbox-status]") ??
+    null
+  );
+}
+
+/**
+ * Busca /v1/verbs/inbox e monta o painel (T912). Usado na abertura e depois de
+ * cada verbo, para o cartão resolvido sair da tela. `note` fica na linha de status.
+ */
+export async function loadInbox(host, note = "", fetcher = globalThis.fetch) {
+  const counter = typeof document !== "undefined" ? document.querySelector("[data-count]") : null;
+  try {
+    const items = inboxItems(await postJson(INBOX_PATH, {}, fetcher));
+    const root = mountInbox(host, items);
+    writeCount(counter, items.length);
+    const line = statusLine(root);
+    if (line && note) line.textContent = note;
+  } catch (error) {
+    const root = mountInbox(host, []);
+    writeCount(counter, 0);
+    const message = `Não consegui ler as pendências: ${error instanceof Error ? error.message : String(error)}`;
+    const line = statusLine(root);
+    if (line) {
+      line.textContent = message;
+      line.dataset.failed = "true";
+    } else announce(host, message, true);
+  }
+  return host;
+}
+
 /** Liga os botões [data-verb] do Inbox ao registro de verbos. */
 export function mountInboxActions(root = document) {
   if (!root?.addEventListener || boundRoots.has(root)) return root;
@@ -209,6 +243,8 @@ export function mountInboxActions(root = document) {
       if (typeof CustomEvent === "function") {
         button.dispatchEvent(new CustomEvent("ginga:inbox-action", { bubbles: true, detail: { verb, result } }));
       }
+      // relê a lista: o item resolvido some e o resultado fica na linha de status
+      if (root?.replaceChildren) await loadInbox(root, `${verb}: ok`);
     } catch (error) {
       announce(root, error instanceof Error ? error.message : String(error), true);
     } finally {
@@ -227,22 +263,7 @@ export async function initInbox(host = typeof document !== "undefined" ? documen
     connectInboxSse(counter, new EventSource(EVENTS_PATH));
   }
 
-  try {
-    const payload = await postJson(INBOX_PATH, {});
-    const items = inboxItems(payload);
-    mountInbox(host, items);
-    writeCount(counter, items.length);
-  } catch (error) {
-    const root = mountInbox(host, []);
-    writeCount(counter, 0);
-    const message = `Não consegui ler as pendências: ${error instanceof Error ? error.message : String(error)}`;
-    // o status vive dentro do painel recém-montado; escreve direto nele
-    const line = root?.children?.find?.((n) => n?.dataset && "inboxStatus" in n.dataset) ?? root?.querySelector?.("[data-inbox-status]");
-    if (line) {
-      line.textContent = message;
-      line.dataset.failed = "true";
-    } else announce(host, message, true);
-  }
+  await loadInbox(host);
   return host;
 }
 
