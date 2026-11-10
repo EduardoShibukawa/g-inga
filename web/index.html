@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
   <script type="module" src="/inbox.js"></script>
+  <script type="module" src="/intent.js"></script>
   <script type="module" src="/board.js"></script>
   <script type="module" src="/plan.js"></script>
   <script type="module" src="/alerts.js"></script>
@@ -62,6 +63,7 @@
         </div>
 
         <div class="topbar-actions">
+          <button class="intent-open" type="button" data-intent-open aria-expanded="false" aria-controls="intent-form">+ Intent</button>
           <span class="connection" data-connection data-state="connecting" role="status" aria-live="polite">
             <span class="connection-dot" aria-hidden="true"></span>
             <span data-connection-label>Conectando</span>
@@ -75,6 +77,22 @@
           </button>
         </div>
       </header>
+
+      <form id="intent-form" class="intent-form" data-intent-form hidden>
+        <label for="intent-text">O que você quer? <span class="intent-hint">O pedido cru vira um INTENT.</span></label>
+        <textarea id="intent-text" name="text" rows="3" required placeholder="Ex.: o painel deveria mostrar o custo do mês por provider"></textarea>
+        <div class="intent-row">
+          <label for="intent-track">Trilha</label>
+          <select id="intent-track" name="track">
+            <option value="auto">auto (a triagem decide)</option>
+            <option value="feature">feature (com SPEC)</option>
+            <option value="small">pequena (direto ao PLAN)</option>
+          </select>
+          <button class="intent-submit" type="submit">Criar INTENT</button>
+          <button class="intent-cancel" type="button" data-intent-cancel>Cancelar</button>
+        </div>
+        <p class="intent-result" data-intent-result role="status" aria-live="polite"></p>
+      </form>
 
       <main id="main-content" class="content" tabindex="-1">
         <section id="view-inbox" class="view" data-view="inbox" aria-labelledby="title-inbox">
