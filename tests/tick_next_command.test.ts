@@ -56,7 +56,9 @@ function fixture(next: string | null) {
 
 describe("tick pergunta o próximo passo a [commands].next", () => {
   test("executa a ação que o comando devolve e manda o estado por stdin", () => {
-    const f = fixture(`cat > ${"$"}{STATE_OUT}; echo '{\\"cmd\\":\\"judge\\",\\"plan\\":\\"PLAN-0001\\",\\"reason\\":\\"stub\\"}'`.replace("${STATE_OUT}", "state.json"));
+    // o parser de [commands] do tick não desfaz escapes: a resposta vem de arquivo
+    const f = fixture("cat > state.json; cat answer.json");
+    writeFileSync(join(f.ws, "answer.json"), '{"cmd":"judge","plan":"PLAN-0001","reason":"stub"}\n');
     expect(f.tick().exitCode).toBe(0);
     expect(f.calls()).toBe("judge PLAN-0001\n");
     expect(f.phase()).toBe("judge");
@@ -74,7 +76,8 @@ describe("tick pergunta o próximo passo a [commands].next", () => {
   });
 
   test("resposta que não é uma ação válida: vale a regra embutida", () => {
-    const f = fixture(`echo '{\\"cmd\\":\\"apagar-tudo\\"}'`);
+    const f = fixture("cat answer.json");
+    writeFileSync(join(f.ws, "answer.json"), '{"cmd":"apagar-tudo"}\n');
     expect(f.tick().exitCode).toBe(0);
     expect(f.calls()).toBe("red PLAN-0001\n");
   });
