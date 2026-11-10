@@ -310,10 +310,29 @@ function getPlanTasksState(db: Database, plan: string) {
   }));
 }
 
+/**
+ * Dir do PLAN no bundle (T908): a fila traz o id curto (`PLAN-0001`) e o dir
+ * costuma ter slug (`PLAN-0001-demo`). Exato primeiro, depois o prefixo.
+ */
+function planDir(root: string, plan: string): string {
+  const plansDir = join(root, ".ginga", "plans");
+  const exact = join(plansDir, plan);
+  if (existsSync(join(exact, "PLAN.md"))) return exact;
+  try {
+    const match = readdirSync(plansDir)
+      .filter((d) => d.startsWith(`${plan}-`) && existsSync(join(plansDir, d, "PLAN.md")))
+      .sort()[0];
+    if (match) return join(plansDir, match);
+  } catch {
+    // sem bundle: vale o caminho canônico
+  }
+  return exact;
+}
+
 /** Status do frontmatter do PLAN.md do bundle (seed da fase no fluxo de fases). */
 function planFrontmatterStatus(root: string, plan: string): string | null {
   try {
-    const raw = readFileSync(join(root, ".ginga", "plans", plan, "PLAN.md"), "utf8");
+    const raw = readFileSync(join(planDir(root, plan), "PLAN.md"), "utf8");
     return raw.match(/^status:\s*(.+)$/m)?.[1]?.trim() ?? null;
   } catch {
     return null;
@@ -326,7 +345,7 @@ function planFrontmatterStatus(root: string, plan: string): string | null {
  */
 function readJudgeVerdict(root: string, plan: string): string | undefined {
   try {
-    const dir = join(root, ".ginga", "plans", plan, "judge");
+    const dir = join(planDir(root, plan), "judge");
     const files = readdirSync(dir).filter((f) => f.endsWith(".json")).sort();
     const last = files[files.length - 1];
     if (!last) return undefined;
