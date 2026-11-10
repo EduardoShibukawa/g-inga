@@ -2,7 +2,9 @@
 //
 // Fixture: repo git temporário com bundle (.ginga) → PLAN de 1 TASK e o teste
 // em frozen/demo/; [commands] apontando para o manda real (runtime stub `pi`
-// que escreve a solução) e judge stub (pass); merge via gate do fixture.
+// que escreve a solução) e judge stub (pass); merge pelo `manda merge` real.
+// T908: a TASK trabalha na branch do PLAN (plan/0099); a main só recebe o
+// trabalho no merge, depois do judge. Antes a TASK caía direto na main.
 // `ginga tick` (máx. 10 ticks) deve levar o PLAN de approved a done: fases na
 // ordem (approved → red → tasks → judge → done) no state.db, receipt `pass` no
 // ledger temporário e commit na main via gate.
@@ -87,8 +89,10 @@ queue = "bun ${FIX}/queue.ts"
 red = "manda red {plan} --repo . --root {root}"
 run = "manda run {plan} --task TASK-01 --root {root}"
 verify = "pinga verify tasks/T1/PLAN.md --root {worktree} --ledger $PINGA_LEDGER"
-judge = "sh ${FIX}/judge-stub.sh {plan} demo"
-merge = "sh ${FIX}/merge-gate.sh {plan}"
+judge = "sh ${FIX}/judge-stub.sh {plan} ."
+merge = "manda merge {plan} --root {root} && printf 'merge\\t%s\\n' {plan} >> $STUB_LOG"
+gate = "pinga gate --root {worktree} --ledger $PINGA_LEDGER {tasks}"
+post_merge = "pinga ledger verify --ledger $PINGA_LEDGER"
 replan = "sh ${FIX}/replan-stub.sh {plan} {task}"
 
 [runtimes.tier]
@@ -123,7 +127,9 @@ function fixture(fail: boolean) {
   const sh = (...a: string[]) =>
     Bun.spawnSync(["git", "-c", "user.email=t@t", "-c", "user.name=t", ...a], { cwd: ws, stdout: "pipe", stderr: "pipe" });
   sh("init", "-q", "-b", "main");
-  put(".gitignore", ".worktrees/\n*-plan-*/\n");
+  // .ginga/ fora do git do fixture: no workspace real o bundle vive na raiz,
+  // não no repo de código, e o merge exige a main sem mudança pendente.
+  put(".gitignore", ".worktrees/\n*-plan-*/\n.ginga/\nruns/\n");
   put(".ginga/project.toml", projectToml());
   put(`.ginga/plans/${PLAN}/PLAN.md`, PLAN_MD);
   put(`.ginga/plans/${PLAN}/TASK-01-demo.md`, TASK_MD);
