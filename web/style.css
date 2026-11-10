@@ -1219,3 +1219,74 @@ code,
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Modelos e quota — T916 */
+.view .panel + .panel {
+  margin-top: 16px;
+}
+
+.roda-models {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 28px;
+}
+
+.roda-models h2,
+.roda-quota h1,
+.roda-metrics h1,
+.roda-metrics h2,
+.roda-metrics h3 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.models-note {
+  margin: 0 0 12px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.models-cost tfoot th,
+.models-cost tfoot td {
+  border-bottom: 0;
+  font-weight: 700;
+}
+
+.ftpr-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ftpr-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) minmax(80px, 2fr) 44px;
+  align-items: center;
+  gap: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ftpr-model {
+  overflow-wrap: anywhere;
+}
+
+.ftpr-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  overflow: hidden;
+}
+
+.ftpr-bar {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.ftpr-pct {
+  text-align: right;
+  font-weight: 600;
+}

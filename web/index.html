@@ -13,6 +13,7 @@
   <script type="module" src="/plan.js"></script>
   <script type="module" src="/alerts.js"></script>
   <script type="module" src="/metrics.js"></script>
+  <script type="module" src="/models.js"></script>
   <script type="module" src="/ledger.js"></script>
   <script type="module" src="/spec.js"></script>
 </head>
@@ -50,7 +51,7 @@
           <span>Métricas</span>
         </a>
         <a href="#quota" data-view="quota" aria-controls="view-quota">
-          <span>Quota</span>
+          <span>Modelos</span>
         </a>
         <a href="#ledger" data-view="ledger" aria-controls="view-ledger">
           <span>Ledger</span>
@@ -176,12 +177,15 @@
           <header class="view-header">
             <div>
               <p class="eyebrow">Uso por provider</p>
-              <h1 id="title-quota">Quota</h1>
+              <h1 id="title-quota">Modelos e quota</h1>
             </div>
-            <p class="view-description">Consumo atual e janelas de reset das cotas disponíveis.</p>
+            <p class="view-description">Cotas de cada provider, gasto por modelo e quanto cada um acerta de primeira.</p>
           </header>
           <div class="panel" data-quota aria-live="polite">
             <p class="empty-state">Carregando as quotas…</p>
+          </div>
+          <div class="panel" data-models aria-live="polite">
+            <p class="empty-state">Carregando os modelos…</p>
           </div>
         </section>
 
