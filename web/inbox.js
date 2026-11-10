@@ -53,7 +53,8 @@ export function inboxVerbRequest(button) {
   return { verb, path: `/v1/verbs/${inboxVerbSlug(verb)}`, body: { id } };
 }
 
-async function postJson(path, body, fetcher) {
+// `fetcher` é opcional: no navegador ninguém injeta, vale o fetch global (T911).
+async function postJson(path, body, fetcher = globalThis.fetch) {
   const response = await fetcher(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -168,8 +169,14 @@ export function mountInbox(host, items = []) {
   }
   for (const item of list) wrap.append(renderInboxItem(item));
 
+  // linha de status: é onde o erro da API aparece (antes ele sumia)
+  const status = element("p", "inbox-status");
+  status.dataset.inboxStatus = "";
+  status.setAttribute?.("data-inbox-status", "");
+  status.setAttribute?.("role", "status");
+
   const root = element("section", "roda-inbox");
-  root.append(header, wrap);
+  root.append(header, wrap, status);
   host.replaceChildren(root);
   return root;
 }
@@ -226,9 +233,15 @@ export async function initInbox(host = typeof document !== "undefined" ? documen
     mountInbox(host, items);
     writeCount(counter, items.length);
   } catch (error) {
-    mountInbox(host, []);
+    const root = mountInbox(host, []);
     writeCount(counter, 0);
-    announce(host, error instanceof Error ? error.message : String(error), true);
+    const message = `Não consegui ler as pendências: ${error instanceof Error ? error.message : String(error)}`;
+    // o status vive dentro do painel recém-montado; escreve direto nele
+    const line = root?.children?.find?.((n) => n?.dataset && "inboxStatus" in n.dataset) ?? root?.querySelector?.("[data-inbox-status]");
+    if (line) {
+      line.textContent = message;
+      line.dataset.failed = "true";
+    } else announce(host, message, true);
   }
   return host;
 }
