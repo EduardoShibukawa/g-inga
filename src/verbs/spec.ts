@@ -10,6 +10,8 @@ type Section = { title: string; body: string };
 
 const OBJECTIVE = /^objetivo$/i;
 const ACS = /^(acs?|crit[ée]rios de aceite)$/i;
+// O verbo `answer` grava esta seção no arquivo; aqui as respostas já saem estruturadas.
+const ANSWERS = /^respostas$/i;
 
 function sections(raw: string): Section[] {
   const body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n?/, "");
@@ -100,6 +102,6 @@ export function spec(ctx: VerbCtx, args: VerbArgs): unknown {
     acs,
     blockers,
     answers,
-    sections: all.filter((s) => !OBJECTIVE.test(s.title) && !ACS.test(s.title)),
+    sections: all.filter((s) => !OBJECTIVE.test(s.title) && !ACS.test(s.title) && !ANSWERS.test(s.title)),
   };
 }
