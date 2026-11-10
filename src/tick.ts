@@ -594,10 +594,12 @@ async function runTickPass(
         const tasksState = planEntries.map(e => {
           // Try to get attempts from task_exec
           let attempts = 0;
+          let execFailed = false;
           try {
             const row = db.query("SELECT attempts, status FROM task_exec WHERE plan = ? AND task = ?").get(plan, e.task) as any;
             if (row) {
               attempts = Number(row.attempts ?? 0);
+              execFailed = row.status === "failed";
             }
           } catch {}
           // Determine status
@@ -606,6 +608,10 @@ async function runTickPass(
           else if (e.state === "fail") status = "fail";
           else if (e.state === "blocked") status = "blocked";
           else status = "open";
+          // T909: a fila real do pinga nunca devolve "fail" (TASK reprovada
+          // volta a `open`). Três despachos com saída ≠ 0 registrados no
+          // task_exec é o que conta como falha para o replan.
+          if (status === "open" && execFailed && attempts >= 3) status = "fail";
           return {
             id: e.ref,
             status,
