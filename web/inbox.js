@@ -125,6 +125,15 @@ function actionsFor(item) {
   return [...new Set(declared.filter((verb) => INBOX_VERBS.includes(verb)))];
 }
 
+/** A SPEC que o item cita (entity ou id), ou null (T921). */
+export function specOf(item) {
+  for (const value of [item?.entity, item?.id]) {
+    const m = /^SPEC-\d{4}/.exec(String(value ?? ""));
+    if (m) return m[0];
+  }
+  return null;
+}
+
 /** Um cartão do Inbox; os botões carregam data-verb e data-id. */
 export function renderInboxItem(item) {
   const card = element("article", "inbox-card");
@@ -148,6 +157,14 @@ export function renderInboxItem(item) {
       button.dataset.likely = "true";
     }
     actions.append(button);
+  }
+  const spec = specOf(item);
+  if (spec) {
+    // T921: a tela da SPEC ouve o clique em [data-open-spec] e abre nela
+    const link = element("a", "inbox-open", "Abrir SPEC");
+    link.href = "#spec";
+    link.dataset.openSpec = spec;
+    actions.append(link);
   }
   return card.append(actions), card;
 }

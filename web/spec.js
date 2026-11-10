@@ -211,6 +211,11 @@ export function initSpec(host = typeof document !== "undefined" ? document.query
     if (answer) void act("answer", { blocker_id: answer, text: value }, "Resposta gravada.");
     else void act("reject", { id: reject, reason: value }, "SPEC devolvida com o pedido de mudança.");
   });
+  // T921: o cartão do Inbox aponta a SPEC; a troca de view (#spec) mostra.
+  document.addEventListener("click", (event) => {
+    const link = event.target?.closest?.("[data-open-spec]");
+    if (link) current = link.getAttribute("data-open-spec");
+  });
   window.addEventListener("ginga:viewchange", (event) => {
     if (event.detail?.view === "spec") void show();
   });
