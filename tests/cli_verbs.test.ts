@@ -124,6 +124,7 @@ const CASES: Record<string, VerbCase> = {
   quota: { argv: ["quota"], args: {} },
   metrics: { argv: ["metrics"], args: {} },
   ledger: { argv: ["ledger"], args: {}, bin: ["pinga"] },
+  spec: { argv: ["spec", "SPEC-0001"], args: { id: "SPEC-0001" } },
   index: { argv: ["index"], args: {} },
   // Operação (PLAN-0015 TASK-03; cobertura TASK-07): tty-guards via `api`, delegações com stub no PATH.
   ctl: { argv: ["ctl"], args: {}, via: "api" },

@@ -3,7 +3,7 @@
 (() => {
   "use strict";
 
-  const VIEWS = Object.freeze(["inbox", "board", "plan", "alerts", "metrics", "quota", "ledger"]);
+  const VIEWS = Object.freeze(["inbox", "board", "plan", "alerts", "metrics", "quota", "ledger", "spec"]);
   const THEME_KEY = "ginga:roda-theme";
   const root = document.documentElement;
   let eventSource = null;

@@ -14,6 +14,7 @@
   <script type="module" src="/alerts.js"></script>
   <script type="module" src="/metrics.js"></script>
   <script type="module" src="/ledger.js"></script>
+  <script type="module" src="/spec.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Pular para o conteúdo</a>
@@ -35,6 +36,9 @@
         </a>
         <a href="#board" data-view="board" aria-controls="view-board">
           <span>Quadro</span>
+        </a>
+        <a href="#spec" data-view="spec" aria-controls="view-spec">
+          <span>SPEC</span>
         </a>
         <a href="#plan" data-view="plan" aria-controls="view-plan">
           <span>PLAN</span>
@@ -191,6 +195,19 @@
           </header>
           <div class="panel" data-ledger aria-live="polite">
             <p class="empty-state">Carregando o ledger…</p>
+          </div>
+        </section>
+
+        <section id="view-spec" class="view" data-view="spec" aria-labelledby="title-spec" hidden>
+          <header class="view-header">
+            <div>
+              <p class="eyebrow">O quê e por quê</p>
+              <h1 id="title-spec">SPEC</h1>
+            </div>
+            <p class="view-description">Ler a SPEC, responder os blockers e aprovar ou pedir mudança.</p>
+          </header>
+          <div class="panel" data-spec aria-live="polite">
+            <p class="empty-state">Carregando as SPECs…</p>
           </div>
         </section>
       </main>
