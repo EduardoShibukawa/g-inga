@@ -13,6 +13,7 @@
 // namespace (HOME falso, sem o repo irmão): a cadeia externa fica bloqueada.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -45,8 +46,30 @@ const PLANNER_REPLY = [
   "=== FILE: PLAN.md ===",
   `---\ntype: plan\ntitle: Quero um src/a.ts\nintent: INTENT-0001\nstatus: draft\n---\n## Objetivo\ncriar src/a.ts`,
   "=== FILE: TASK-01-a.md ===",
-  `---\ntype: task\nmode: mvp\ngoal: "cria src/a.ts"\nplan: ${PLAN_ID}\ndepends_on: []\ntier: free\ntouch: [src/a.ts]\ndone_when: "test -f src/a.ts"\ntests_frozen: []\n---\n## Fazer\n- criar src/a.ts`,
+  `---\ntype: task\nmode: mvp\ngoal: "cria src/a.ts"\nplan: ${PLAN_ID}\ndepends_on: []\ntier: free\ntouch: [src/a.ts, tests/a.test.ts]\ndone_when: "bun test tests/a.test.ts"\ntests_frozen: [tests/a.test.ts]\n---\n## Fazer\n- criar src/a.ts`,
 ].join("\n");
+
+const ROUTING = `---
+type: policy
+title: Roteamento do fixture
+ladder:
+  - {tier: free, tries: 1}
+breaker: {same_reason: 3, ignore: [quota_exhausted, infra]}
+pools:
+  executor:
+    free: [opencode/glm-5.3-flash-free]
+  verifier_judge:
+    default: [agy/gemini-4-argon]
+budget: {month_usd: 10, task_usd: 0.25, plan_usd: 1.5, warn_pct: 80}
+---
+`;
+
+const A_TEST = `import { expect, test } from "bun:test";
+import { existsSync } from "node:fs";
+test("src/a.ts existe", () => {
+  expect(existsSync("src/a.ts")).toBe(true);
+});
+`;
 
 let ws: string;
 let aux: string;
@@ -73,6 +96,7 @@ function env(): Record<string, string> {
     GINGA_BY: "",
     GINGA_STATE_DB: join(aux, "state.db"),
     GINGA_EVENTS: join(aux, "events.jsonl"),
+    PINGA_LEDGER: ledger,
     STUB_LOG: log,
     STUB_PLANNER_OUT: join(aux, "planner.jsonl"),
     STUB_EXEC_OUT: join(STUBS, "exec-ok.jsonl"),
@@ -81,6 +105,19 @@ function env(): Record<string, string> {
 
 function ginga(...args: string[]) {
   return Bun.spawnSync([process.execPath, GINGA_BIN, ...args], { cwd: ws, env: env(), stdout: "pipe", stderr: "pipe" });
+}
+
+function phase(): string | null {
+  const p = join(aux, "state.db");
+  if (!existsSync(p)) return null;
+  const db = new Database(p, { readonly: true });
+  try {
+    return (db.query("SELECT phase FROM plan_phase WHERE plan = ?").get("PLAN-0001") as { phase: string } | undefined)?.phase ?? null;
+  } catch {
+    return null;
+  } finally {
+    db.close();
+  }
 }
 
 /** Insere linhas logo após o cabeçalho `[section]` (sem duplicar a tabela TOML). */
@@ -104,6 +141,12 @@ beforeEach(() => {
   if (PINGA !== "") symlinkSync(PINGA, join(bin, "pinga"));
   writeFileSync(join(bin, "manda"), `#!/bin/sh\nexec "${process.execPath}" "${MANDA_BIN}" "$@"\n`);
   chmodSync(join(bin, "manda"), 0o755);
+  // juiz de mentira (T922): o formato real do `agy --print --output-format json`
+  writeFileSync(
+    join(bin, "agy"),
+    `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify({ conversation_id: "c1", status: "SUCCESS", response: JSON.stringify({ verdict: "pass", findings: [] }), duration_seconds: 1, num_turns: 1, usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } })}'\n`,
+  );
+  chmodSync(join(bin, "agy"), 0o755);
   writeFileSync(join(aux, "planner.jsonl"), text(PLANNER_REPLY));
   sh("init", "-q", "-b", "main");
   put(".gitignore", ".worktrees/\n");
@@ -166,24 +209,36 @@ describe("onboarding sem gira (init → intent → approve → tick → receipt 
       expect(appr.exitCode).toBe(0);
       expect(readFileSync(join(ws, ".ginga", "plans", PLAN_ID, "PLAN.md"), "utf8")).toContain("status: approved");
 
-      // o que o humano faz: contrato pinga + comandos do projeto (fila, despacho, verify com ledger temporário)
-      put("tasks/T1/PLAN.md", '---\nmode: mvp\ngoal: "cria src/a.ts"\ndone_when: "test -f src/a.ts"\ntouch: ["src/a.ts"]\n---\n');
-      addToml(tomlPath, "commands", [
-        `queue = "pinga queue --json --root {root} --ledger ${ledger}"`,
-        `dispatch = "manda run ${PLAN_ID} --root {root}"`,
-        `verify = "pinga verify tasks/T1/PLAN.md --root {worktree} --ledger ${ledger}"`,
-      ]);
+      // o que o humano faz: roteamento com o pool do juiz e o gate da TASK. Fila, red, run,
+      // judge e merge ficam nos comandos padrão do tick (T922: fluxo da branch do PLAN).
+      // e o teste congelado da TASK, que o `manda red` leva para a branch do PLAN
+      put(`.ginga/plans/${PLAN_ID}/frozen/tests/a.test.ts`, A_TEST);
+      put(".ginga/models/ROUTING.md", ROUTING);
+      writeFileSync(tomlPath, readFileSync(tomlPath, "utf8") + '\n[routing]\nmodels = ".ginga/models"\n');
+      addToml(tomlPath, "commands", ['verify = "pinga verify tasks/{gate_id}/PLAN.md --root {worktree}"', 'judge_seal = "none"']);
       sh("add", ".");
       sh("commit", "-q", "-m", "plan");
+      const mainBefore = sh("rev-parse", "main");
 
+      // primeiro tick: red. O trabalho nasce na branch do PLAN; a main não anda.
       const tick = ginga("tick", "--root", ws);
       expect(tick.stderr.toString()).not.toContain("fila indisponível");
       expect(tick.exitCode).toBe(0);
-      expect(tick.stdout.toString()).toContain("despachado: T1");
+      expect(sh("rev-parse", "main")).toBe(mainBefore);
+      expect(sh("branch", "--list", "plan/0001")).toContain("plan/0001");
+
+      // ticks até o merge do gate: tasks → judge (cego, stub) → done
+      let ph: string | null = phase();
+      for (let i = 0; i < 10 && ph !== "done"; i++) {
+        expect(ginga("tick", "--root", ws).exitCode).toBe(0);
+        ph = phase();
+      }
+      expect(ph).toBe("done");
 
       expect(existsSync(join(ws, "src", "a.ts"))).toBe(true);
-      const q = Bun.spawnSync([PINGA, "queue", "--json", "--root", ws, "--ledger", ledger], { env: env(), stdout: "pipe", stderr: "pipe" });
-      const t1 = JSON.parse(q.stdout.toString()).tasks.find((t: { task: string }) => t.task === "T1");
+      expect(sh("log", "--format=%s", "-1", "main")).toContain("(plan/0001)");
+      const q = Bun.spawnSync([PINGA, "queue", "--json", "--root", ws], { env: env(), stdout: "pipe", stderr: "pipe" });
+      const t1 = JSON.parse(q.stdout.toString()).tasks.find((t: { task: string }) => t.task === "PLAN-0001/TASK-01");
       expect(t1?.state).toBe("done");
       expect(t1?.receipt?.status).toBe("pass");
     },
