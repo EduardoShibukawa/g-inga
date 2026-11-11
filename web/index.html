@@ -8,10 +8,15 @@
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
   <script type="module" src="/inbox.js"></script>
+  <script type="module" src="/intent.js"></script>
   <script type="module" src="/board.js"></script>
   <script type="module" src="/plan.js"></script>
   <script type="module" src="/alerts.js"></script>
   <script type="module" src="/metrics.js"></script>
+  <script type="module" src="/models.js"></script>
+  <script type="module" src="/ledger.js"></script>
+  <script type="module" src="/spec.js"></script>
+  <script type="module" src="/onboarding.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Pular para o conteúdo</a>
@@ -34,6 +39,9 @@
         <a href="#board" data-view="board" aria-controls="view-board">
           <span>Quadro</span>
         </a>
+        <a href="#spec" data-view="spec" aria-controls="view-spec">
+          <span>SPEC</span>
+        </a>
         <a href="#plan" data-view="plan" aria-controls="view-plan">
           <span>PLAN</span>
         </a>
@@ -44,7 +52,13 @@
           <span>Métricas</span>
         </a>
         <a href="#quota" data-view="quota" aria-controls="view-quota">
-          <span>Quota</span>
+          <span>Modelos</span>
+        </a>
+        <a href="#ledger" data-view="ledger" aria-controls="view-ledger">
+          <span>Ledger</span>
+        </a>
+        <a href="#onboarding" data-view="onboarding" aria-controls="view-onboarding">
+          <span>Onboarding</span>
         </a>
       </nav>
 
@@ -62,6 +76,7 @@
         </div>
 
         <div class="topbar-actions">
+          <button class="intent-open" type="button" data-intent-open aria-expanded="false" aria-controls="intent-form">+ Intent</button>
           <span class="connection" data-connection data-state="connecting" role="status" aria-live="polite">
             <span class="connection-dot" aria-hidden="true"></span>
             <span data-connection-label>Conectando</span>
@@ -75,6 +90,22 @@
           </button>
         </div>
       </header>
+
+      <form id="intent-form" class="intent-form" data-intent-form hidden>
+        <label for="intent-text">O que você quer? <span class="intent-hint">O pedido cru vira um INTENT.</span></label>
+        <textarea id="intent-text" name="text" rows="3" required placeholder="Ex.: o painel deveria mostrar o custo do mês por provider"></textarea>
+        <div class="intent-row">
+          <label for="intent-track">Trilha</label>
+          <select id="intent-track" name="track">
+            <option value="auto">auto (a triagem decide)</option>
+            <option value="feature">feature (com SPEC)</option>
+            <option value="small">pequena (direto ao PLAN)</option>
+          </select>
+          <button class="intent-submit" type="submit">Criar INTENT</button>
+          <button class="intent-cancel" type="button" data-intent-cancel>Cancelar</button>
+        </div>
+        <p class="intent-result" data-intent-result role="status" aria-live="polite"></p>
+      </form>
 
       <main id="main-content" class="content" tabindex="-1">
         <section id="view-inbox" class="view" data-view="inbox" aria-labelledby="title-inbox">
@@ -150,12 +181,54 @@
           <header class="view-header">
             <div>
               <p class="eyebrow">Uso por provider</p>
-              <h1 id="title-quota">Quota</h1>
+              <h1 id="title-quota">Modelos e quota</h1>
             </div>
-            <p class="view-description">Consumo atual e janelas de reset das cotas disponíveis.</p>
+            <p class="view-description">Cotas de cada provider, gasto por modelo e quanto cada um acerta de primeira.</p>
           </header>
           <div class="panel" data-quota aria-live="polite">
             <p class="empty-state">Carregando as quotas…</p>
+          </div>
+          <div class="panel" data-models aria-live="polite">
+            <p class="empty-state">Carregando os modelos…</p>
+          </div>
+        </section>
+
+        <section id="view-ledger" class="view" data-view="ledger" aria-labelledby="title-ledger" hidden>
+          <header class="view-header">
+            <div>
+              <p class="eyebrow">Prova do gate</p>
+              <h1 id="title-ledger">Ledger e Bench</h1>
+            </div>
+            <p class="view-description">Receipts do pinga, o estado da cadeia e o bench das SPECs.</p>
+          </header>
+          <div class="panel" data-ledger aria-live="polite">
+            <p class="empty-state">Carregando o ledger…</p>
+          </div>
+        </section>
+
+        <section id="view-spec" class="view" data-view="spec" aria-labelledby="title-spec" hidden>
+          <header class="view-header">
+            <div>
+              <p class="eyebrow">O quê e por quê</p>
+              <h1 id="title-spec">SPEC</h1>
+            </div>
+            <p class="view-description">Ler a SPEC, responder os blockers e aprovar ou pedir mudança.</p>
+          </header>
+          <div class="panel" data-spec aria-live="polite">
+            <p class="empty-state">Carregando as SPECs…</p>
+          </div>
+        </section>
+
+        <section id="view-onboarding" class="view" data-view="onboarding" aria-labelledby="title-onboarding" hidden>
+          <header class="view-header">
+            <div>
+              <p class="eyebrow">ginga init</p>
+              <h1 id="title-onboarding">Onboarding</h1>
+            </div>
+            <p class="view-description">O que o ginga leu deste projeto e o contrato que ele propõe.</p>
+          </header>
+          <div class="panel" data-onboarding aria-live="polite">
+            <p class="empty-state">Lendo o projeto…</p>
           </div>
         </section>
       </main>

@@ -1,6 +1,6 @@
 // `ginga tick` (PLAN-0010 TASK-02): varre a fila (`[commands].queue`) e
 // despacha cada TASK `open` sem `blocked_by` por `[commands].dispatch`
-// (padrão `manda run {plan} --task {task}`). O claim é atômico entre processos:
+// (padrão `manda run {plan} --task {task} --root {root}`). O claim é atômico entre processos:
 // BEGIN IMMEDIATE + busy_timeout em task_exec marca `running` com lease
 // (`lease_owner`, `lease_until` em epoch ms, renovado enquanto o despacho
 // roda); no fim o lease é liberado e o status vira `dispatched` (exit 0,
@@ -29,16 +29,23 @@ const BUSY_TIMEOUT_MS = 10_000;
 
 type QueueEntry = { ref: string; plan: string; task: string; state: string; blocked_by: string[] };
 type Exec = { plan: string; task: string };
-type Commands = { queue: string; dispatch: string; red?: string; run?: string; judge?: string; merge?: string; replan?: string; notify?: string };
+type Commands = { queue: string; dispatch: string; red?: string; run?: string; judge?: string; merge?: string; replan?: string; notify?: string; next?: string };
 
-const DEFAULT_COMMANDS: Commands = {
+/**
+ * Padrões de `[commands]` (T907): cada fase é um verbo do manda com `--root`.
+ * `manda red|judge|merge {plan}` cobrem todos os repos do PLAN; nenhum padrão
+ * aponta para script fora dos repos.
+ */
+export const DEFAULT_COMMANDS: Commands = {
   queue: "pinga queue --json --root {root}",
-  dispatch: "manda run {plan} --task {task}",
-  red: "manda red {plan}",
-  run: "manda run {plan} {task}",
-  judge: "manda judge {plan}",
-  merge: "bin/merge-gate.sh {plan}",
+  dispatch: "manda run {plan} --task {task} --root {root}",
+  red: "manda red {plan} --root {root}",
+  run: "manda run {plan} --task {task} --root {root}",
+  judge: "manda judge {plan} --root {root}",
+  merge: "manda merge {plan} --root {root}",
   replan: "manda replan {plan} {task}",
+  // T910: quem decide o próximo passo do PLAN é o orquestrador
+  next: "manda next",
 };
 
 /** `queue = "…"`/`dispatch = "…"` da seção [commands] do project.toml. */
@@ -54,7 +61,7 @@ export function parseCommands(raw: string): Partial<Commands> {
     const kv = line.match(/^\s*([A-Za-z0-9_-]+)\s*=\s*"(.*)"\s*$/);
     if (kv && section === "commands") {
       const key = kv[1]! as keyof Commands;
-      if (key === "queue" || key === "dispatch" || key === "red" || key === "run" || key === "judge" || key === "merge" || key === "replan" || key === "notify") {
+      if (key === "queue" || key === "dispatch" || key === "red" || key === "run" || key === "judge" || key === "merge" || key === "replan" || key === "notify" || key === "next") {
         cmds[key] = kv[2]!;
       }
     }
@@ -75,6 +82,40 @@ function readCommands(root: string): Commands {
 /** Substitui {plan}, {task} e {root} no comando configurado. */
 function fill(command: string, vars: Record<string, string>): string {
   return command.replace(/\{(\w+)\}/g, (m, key: string) => (key in vars ? vars[key]! : m));
+}
+
+const ACTION_CMDS = new Set(["red", "run", "judge", "merge", "replan", "notify", "none"]);
+
+/**
+ * Próxima ação do PLAN (T910): o estado vai por stdin para `[commands].next`
+ * (padrão `manda next`) e a ação volta em JSON. `"builtin"`, comando que não
+ * responde ou resposta inválida usam a regra embutida de `tick_plan.ts`.
+ */
+function askNext(command: string | undefined, state: Parameters<typeof nextAction>[0] & { plan: string }, root: string) {
+  if (command && command !== "builtin") {
+    try {
+      const r = Bun.spawnSync(["/bin/sh", "-c", fill(command, { root, plan: state.plan })], {
+        stdin: Buffer.from(JSON.stringify(state)),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      if (r.exitCode === 0) {
+        const line = r.stdout.toString("utf8").trim().split("\n").pop() ?? "";
+        const a = JSON.parse(line) as { cmd?: unknown; plan?: unknown; task?: unknown; reason?: unknown };
+        if (typeof a.cmd === "string" && ACTION_CMDS.has(a.cmd)) {
+          return {
+            cmd: a.cmd as ReturnType<typeof nextAction>["cmd"],
+            plan: typeof a.plan === "string" && a.plan !== "" ? a.plan : state.plan,
+            ...(typeof a.task === "string" && a.task !== "" ? { task: a.task } : {}),
+            reason: typeof a.reason === "string" ? a.reason : "",
+          };
+        }
+      }
+    } catch {
+      // cai na regra embutida
+    }
+  }
+  return nextAction(state);
 }
 
 /** Lê o JSON da fila vindo do comando de queue configurado. */
@@ -305,10 +346,29 @@ function getPlanTasksState(db: Database, plan: string) {
   }));
 }
 
+/**
+ * Dir do PLAN no bundle (T908): a fila traz o id curto (`PLAN-0001`) e o dir
+ * costuma ter slug (`PLAN-0001-demo`). Exato primeiro, depois o prefixo.
+ */
+function planDir(root: string, plan: string): string {
+  const plansDir = join(root, ".ginga", "plans");
+  const exact = join(plansDir, plan);
+  if (existsSync(join(exact, "PLAN.md"))) return exact;
+  try {
+    const match = readdirSync(plansDir)
+      .filter((d) => d.startsWith(`${plan}-`) && existsSync(join(plansDir, d, "PLAN.md")))
+      .sort()[0];
+    if (match) return join(plansDir, match);
+  } catch {
+    // sem bundle: vale o caminho canônico
+  }
+  return exact;
+}
+
 /** Status do frontmatter do PLAN.md do bundle (seed da fase no fluxo de fases). */
 function planFrontmatterStatus(root: string, plan: string): string | null {
   try {
-    const raw = readFileSync(join(root, ".ginga", "plans", plan, "PLAN.md"), "utf8");
+    const raw = readFileSync(join(planDir(root, plan), "PLAN.md"), "utf8");
     return raw.match(/^status:\s*(.+)$/m)?.[1]?.trim() ?? null;
   } catch {
     return null;
@@ -321,7 +381,7 @@ function planFrontmatterStatus(root: string, plan: string): string | null {
  */
 function readJudgeVerdict(root: string, plan: string): string | undefined {
   try {
-    const dir = join(root, ".ginga", "plans", plan, "judge");
+    const dir = join(planDir(root, plan), "judge");
     const files = readdirSync(dir).filter((f) => f.endsWith(".json")).sort();
     const last = files[files.length - 1];
     if (!last) return undefined;
@@ -570,10 +630,12 @@ async function runTickPass(
         const tasksState = planEntries.map(e => {
           // Try to get attempts from task_exec
           let attempts = 0;
+          let execFailed = false;
           try {
             const row = db.query("SELECT attempts, status FROM task_exec WHERE plan = ? AND task = ?").get(plan, e.task) as any;
             if (row) {
               attempts = Number(row.attempts ?? 0);
+              execFailed = row.status === "failed";
             }
           } catch {}
           // Determine status
@@ -582,6 +644,10 @@ async function runTickPass(
           else if (e.state === "fail") status = "fail";
           else if (e.state === "blocked") status = "blocked";
           else status = "open";
+          // T909: a fila real do pinga nunca devolve "fail" (TASK reprovada
+          // volta a `open`). Três despachos com saída ≠ 0 registrados no
+          // task_exec é o que conta como falha para o replan.
+          if (status === "open" && execFailed && attempts >= 3) status = "fail";
           return {
             id: e.ref,
             status,
@@ -589,12 +655,13 @@ async function runTickPass(
             deps_done: (e.blocked_by?.length ?? 0) === 0,
           };
         });
-        const action = nextAction({
+        const action = askNext(commands.next, {
+          plan,
           phase: planPhase.phase,
           tasks: tasksState,
           cap_ok: quotaCapOk(readQuotas({ home: process.env.HOME ?? homedir(), db })),
           judge: readJudgeVerdict(base, plan),
-        });
+        }, base);
         if (action.cmd === "none" || action.cmd === "notify") continue;
         // Execute action
         const cmdTemplate = (commands as any)[action.cmd];

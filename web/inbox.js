@@ -53,7 +53,8 @@ export function inboxVerbRequest(button) {
   return { verb, path: `/v1/verbs/${inboxVerbSlug(verb)}`, body: { id } };
 }
 
-async function postJson(path, body, fetcher) {
+// `fetcher` é opcional: no navegador ninguém injeta, vale o fetch global (T911).
+async function postJson(path, body, fetcher = globalThis.fetch) {
   const response = await fetcher(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -124,6 +125,15 @@ function actionsFor(item) {
   return [...new Set(declared.filter((verb) => INBOX_VERBS.includes(verb)))];
 }
 
+/** A SPEC que o item cita (entity ou id), ou null (T921). */
+export function specOf(item) {
+  for (const value of [item?.entity, item?.id]) {
+    const m = /^SPEC-\d{4}/.exec(String(value ?? ""));
+    if (m) return m[0];
+  }
+  return null;
+}
+
 /** Um cartão do Inbox; os botões carregam data-verb e data-id. */
 export function renderInboxItem(item) {
   const card = element("article", "inbox-card");
@@ -148,6 +158,14 @@ export function renderInboxItem(item) {
     }
     actions.append(button);
   }
+  const spec = specOf(item);
+  if (spec) {
+    // T921: a tela da SPEC ouve o clique em [data-open-spec] e abre nela
+    const link = element("a", "inbox-open", "Abrir SPEC");
+    link.href = "#spec";
+    link.dataset.openSpec = spec;
+    actions.append(link);
+  }
   return card.append(actions), card;
 }
 
@@ -168,8 +186,14 @@ export function mountInbox(host, items = []) {
   }
   for (const item of list) wrap.append(renderInboxItem(item));
 
+  // linha de status: é onde o erro da API aparece (antes ele sumia)
+  const status = element("p", "inbox-status");
+  status.dataset.inboxStatus = "";
+  status.setAttribute?.("data-inbox-status", "");
+  status.setAttribute?.("role", "status");
+
   const root = element("section", "roda-inbox");
-  root.append(header, wrap);
+  root.append(header, wrap, status);
   host.replaceChildren(root);
   return root;
 }
@@ -181,6 +205,40 @@ function announce(root, message, failed = false) {
   if (!output) return;
   output.textContent = message;
   output.dataset.failed = String(failed);
+}
+
+/** A linha de status dentro do painel montado (DOM real ou nó de teste). */
+function statusLine(root) {
+  return (
+    root?.children?.find?.((n) => n?.dataset && "inboxStatus" in n.dataset) ??
+    root?.querySelector?.("[data-inbox-status]") ??
+    null
+  );
+}
+
+/**
+ * Busca /v1/verbs/inbox e monta o painel (T912). Usado na abertura e depois de
+ * cada verbo, para o cartão resolvido sair da tela. `note` fica na linha de status.
+ */
+export async function loadInbox(host, note = "", fetcher = globalThis.fetch) {
+  const counter = typeof document !== "undefined" ? document.querySelector("[data-count]") : null;
+  try {
+    const items = inboxItems(await postJson(INBOX_PATH, {}, fetcher));
+    const root = mountInbox(host, items);
+    writeCount(counter, items.length);
+    const line = statusLine(root);
+    if (line && note) line.textContent = note;
+  } catch (error) {
+    const root = mountInbox(host, []);
+    writeCount(counter, 0);
+    const message = `Não consegui ler as pendências: ${error instanceof Error ? error.message : String(error)}`;
+    const line = statusLine(root);
+    if (line) {
+      line.textContent = message;
+      line.dataset.failed = "true";
+    } else announce(host, message, true);
+  }
+  return host;
 }
 
 /** Liga os botões [data-verb] do Inbox ao registro de verbos. */
@@ -202,6 +260,8 @@ export function mountInboxActions(root = document) {
       if (typeof CustomEvent === "function") {
         button.dispatchEvent(new CustomEvent("ginga:inbox-action", { bubbles: true, detail: { verb, result } }));
       }
+      // relê a lista: o item resolvido some e o resultado fica na linha de status
+      if (root?.replaceChildren) await loadInbox(root, `${verb}: ok`);
     } catch (error) {
       announce(root, error instanceof Error ? error.message : String(error), true);
     } finally {
@@ -220,16 +280,7 @@ export async function initInbox(host = typeof document !== "undefined" ? documen
     connectInboxSse(counter, new EventSource(EVENTS_PATH));
   }
 
-  try {
-    const payload = await postJson(INBOX_PATH, {});
-    const items = inboxItems(payload);
-    mountInbox(host, items);
-    writeCount(counter, items.length);
-  } catch (error) {
-    mountInbox(host, []);
-    writeCount(counter, 0);
-    announce(host, error instanceof Error ? error.message : String(error), true);
-  }
+  await loadInbox(host);
   return host;
 }
 

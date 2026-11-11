@@ -15,6 +15,9 @@ import { LEARNING_VERBS } from "./learning";
 import { indexVerb } from "./index";
 import { costSummary, costSync } from "./cost";
 import { quota } from "./quota.ts";
+import { ledger } from "./ledger.ts";
+import { spec } from "./spec.ts";
+import { detect } from "./detect.ts";
 
 export type VerbCtx = { by: string; via: string; root: string; db: Database };
 /** `bool` marca argumento flag (`--yes`): a CLI aceita sem valor (T127). */
@@ -55,6 +58,12 @@ export const VERBS: Verb[] = [
   { name: "cost", args: [], write: false, run: costSummary },
   { name: "quota", args: [], write: false, run: quota },
   { name: "metrics", args: [arg("since")], write: false, run: read.metrics },
+  // T914: receipts do gate para a tela Ledger (lê por [commands].ledger).
+  { name: "ledger", args: [], write: false, run: ledger },
+  // T915: a SPEC aberta (objetivo, ACs, blockers, respostas) para a Roda Web.
+  { name: "spec", args: [arg("id", true)], write: false, run: spec },
+  // T917: o que o init leria do projeto, sem criar nada (tela Onboarding).
+  { name: "detect", args: [], write: false, run: detect },
   // PLAN-0012 TASK-06/14: gera o index.md do bundle; --check só confere (exit 1 se desatualizado).
   { name: "index", args: [{ name: "check", bool: true }], write: true, run: indexVerb },
   // Operação (PLAN-0015 TASK-03): equivalente para cada subcomando do
